@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("voice-assistant")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
+DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 TTS_MODEL_ID = os.environ.get("TTS_MODEL_ID", "facebook/mms-tts-hyw")  # Meta MMS only ships Western Armenian TTS
 WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")  # STT fallback for browsers without Web Speech API
 

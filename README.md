@@ -67,9 +67,10 @@ integration — it's just not wired into the UI anymore.
 ## Why these choices
 
 - **LLM**: routed through Ollama, fixed to `OLLAMA_MODEL` (env var, default
-  `qwen2.5:3b`) — no model picker in the UI. Change it with `ollama pull` +
+  `qwen2.5:7b`) — no model picker in the UI. Change it with `ollama pull` +
   restarting the backend with a different `OLLAMA_MODEL`. See "Known
-  limitation" below for why none of the current options are great.
+  limitation" below for why none of the current options are great — `7b` is
+  just the least-bad one tested so far, not a solved problem.
 - **STT (mic → text)**: browser Web Speech API first choice — zero backend
   cost, streams audio to Google's servers for recognition (needs internet,
   behaves the same on Mac and Windows). Real Chromium browsers (Chrome, Edge)
@@ -147,10 +148,16 @@ Tested against the models already pulled in your Ollama:
   characters), unusable as-is.
 - `gemma2:2b` → real Armenian words but grammatically broken word-salad, not
   a coherent sentence — worse than qwen2.5:3b, not usable either.
-- `qwen2.5:7b` → best of the four, opens with a mostly-coherent Armenian
-  sentence, but still degrades mid-reply into garbled characters and then
-  code-switches into Greek script entirely unprompted. Also much slower on
-  CPU (~2 minutes per reply). Better, but still not reliable.
+- `qwen2.5:7b` (**current default**) → best of the four, opens with a
+  mostly-coherent Armenian sentence, but still degrades mid-reply into
+  garbled characters and then code-switches into Greek script entirely
+  unprompted in some replies. Also much slower on CPU (~2 minutes per
+  reply). In a direct side-by-side against `qwen2.5:3b` on the same
+  question (a comment about the weather), `7b` actually stayed on-topic —
+  `3b` replied with an unrelated non-sequitur about "your famous book" —
+  but `7b`'s second sentence still trailed off into an invented, not-quite-
+  real Armenian word. Better, but still not reliable — set as the default
+  because it's the least-bad option tested so far, not because it's good.
 - `armenia-lawyer-router` / `-v2` → per your own `Armenian_Chat_Status_and_TODO.md`
   notes in the sibling legal project, these degrade into gibberish after the
   first clause — same underlying issue, not fixed by this project.
@@ -183,7 +190,7 @@ Python — see `backend/requirements.txt`). Frontend deps go in
 2. Make sure Ollama is running and has at least one model pulled:
    ```bash
    ollama serve &          # if not already running
-   ollama pull qwen2.5:3b  # or gemma2:2b, qwen2.5:7b, etc.
+   ollama pull qwen2.5:7b  # the default; or qwen2.5:3b, gemma2:2b, etc.
    ```
 3. Start everything (backend on `:8191` + Vite on `:5178`):
    ```bash
@@ -211,7 +218,7 @@ the same reason, in case you call `/api/speak` directly.
 ## Config (env vars, optional)
 
 - `OLLAMA_URL` — default `http://localhost:11434`
-- `OLLAMA_MODEL` — default `qwen2.5:3b` (used when the UI doesn't pass a model)
+- `OLLAMA_MODEL` — default `qwen2.5:7b` (used when the UI doesn't pass a model)
 - `TTS_MODEL_ID` — default `facebook/mms-tts-hyw`
 - `WHISPER_MODEL_SIZE` — default `small` (Safari/Firefox STT fallback; larger
   = more accurate but slower on CPU)
