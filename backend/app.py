@@ -20,7 +20,7 @@ TTS_MODEL_ID = os.environ.get("TTS_MODEL_ID", "facebook/mms-tts-hyw")  # Meta MM
 
 SYSTEM_PROMPT = (
     "You are a warm, helpful voice assistant. Always answer in Armenian "
-    "(հայերեն, Eastern Armenian, Armenian script), even if the user writes "
+    "(հայերեն, Western Armenian, Armenian script), even if the user writes "
     "in English, Russian, or transliterated Armenian, unless they explicitly "
     "ask you to switch language. Keep answers concise and natural, since "
     "they will also be read aloud."

@@ -151,7 +151,7 @@
     // 2) Fallback: browser speech synthesis
     if ("speechSynthesis" in window) {
       const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = "hy-AM";
+      utter.lang = "hyw"; // Western Armenian, matching the backend MMS-TTS voice
       const voices = window.speechSynthesis.getVoices();
       const hyVoice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("hy"));
       if (hyVoice) utter.voice = hyVoice;
