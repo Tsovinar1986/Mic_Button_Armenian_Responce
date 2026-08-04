@@ -24,11 +24,21 @@ reply back in Armenian.
   limitation" below for why none of the current options are great.
 - **STT (mic → text)**: browser Web Speech API first choice — zero backend
   cost, streams audio to Google's servers for recognition (needs internet,
-  behaves the same on Mac and Windows). Only implemented in Chromium browsers
-  though, so Safari and Firefox fall back to `MediaRecorder` + a local
-  **Whisper** model (`faster-whisper`, `small` size, CPU, Armenian language
-  hint) on the backend — slower (few seconds of processing after you stop
-  talking) and fully offline once the model is downloaded once.
+  behaves the same on Mac and Windows). Real Chromium browsers (Chrome, Edge)
+  use it; everything else falls back to `MediaRecorder` + a local **Whisper**
+  model (`faster-whisper`, `small` size, CPU, Armenian language hint) on the
+  backend — slower (few seconds of processing after you stop talking) and
+  fully offline once the model is downloaded once.
+
+  **Gotcha that broke this once**: feature-detecting `webkitSpeechRecognition`
+  isn't enough to decide which path to use — **Safari defines that API in the
+  DOM but it doesn't actually work there** (`.start()` is a silent no-op, no
+  events ever fire, no error either). Detecting it as "supported" made the
+  code take the native-recognition branch in Safari and then do nothing at
+  all, with the Whisper fallback never getting a chance to run. Fixed by
+  gating native recognition on an actual Chromium check (`window.chrome` /
+  `Edg/` / `CriOS` in the user agent), not just API presence — Safari now
+  correctly falls through to the working Whisper path.
 - **TTS (text → voice)**: backend model `facebook/mms-tts-hyw` (Meta MMS),
   with a fallback to the browser's own `speechSynthesis` if the backend call
   fails for any reason. The backend path runs in Python and sounds identical
@@ -60,15 +70,20 @@ reply back in Armenian.
 
 ## Known limitation: local Armenian LLM quality
 
-The system prompt asks for **Western Armenian** specifically (to match the
-TTS voice, see above), but this doesn't fix the underlying reliability
-problem — it's not a prompt-wording issue. The same model, same prompt, same
-kind of question can come back perfectly clean Armenian one call and
-garbled-with-stray-Chinese-characters-and-English-fragments the next. Making
-the prompt more elaborate (explicitly naming "classical Mesropian
-orthography" etc.) made a weak model's output *worse*, not better — small
-models seem to do best with short, plain instructions. Tested against the
-models already pulled in your Ollama:
+The system prompt now just asks for plain "Armenian" (no dialect specifier),
+which in practice reads as Eastern Armenian — deliberately, since these
+models were more precise and coherent that way. Earlier the prompt forced
+**Western Armenian** specifically to match the TTS voice, but forcing that
+dialect made an already-weak model's output *less* reliable — small models
+seem to have much less Western Armenian in their training data, so asking
+for it added a second hard constraint on top of "be coherent Armenian at
+all" and precision suffered. Net effect: the **displayed/spoken text is
+usually Eastern-flavored Armenian, while the TTS voice is Western
+Armenian** — a real, known mismatch, chosen deliberately in favor of the
+text actually being correct. Making the prompt more elaborate in general
+(explicitly naming "classical Mesropian orthography" etc.) made output
+*worse* too — small models seem to do best with short, plain instructions.
+Tested against the models already pulled in your Ollama:
 
 - `qwen2.5:3b` → produces broken/garbled Armenian (mixed-in stray
   characters), unusable as-is.

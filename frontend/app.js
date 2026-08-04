@@ -60,9 +60,9 @@
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
       if (data.ollama) {
-        setStatus("ok", `Connected · ${data.models.length} model(s) available`);
+        setStatus("ok", "Connected");
       } else {
-        setStatus("bad", "Ollama unreachable");
+        setStatus("bad", "Unreachable");
       }
     } catch (e) {
       setStatus("bad", "Backend unreachable");
@@ -152,8 +152,13 @@
   }
 
   // ---------------- Speech recognition (mic input) ----------------
+  // Safari exposes `webkitSpeechRecognition` in the DOM but it doesn't
+  // actually work there (start() is a silent no-op) — so feature detection
+  // alone isn't enough. Only trust it in real Chromium browsers, and let
+  // Safari fall through to the MediaRecorder + backend Whisper path below.
+  const isChromiumBrowser = !!window.chrome || /Edg\//.test(navigator.userAgent) || /CriOS/.test(navigator.userAgent);
   const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const recognitionSupported = !!SpeechRecognitionImpl;
+  const recognitionSupported = !!SpeechRecognitionImpl && isChromiumBrowser;
   const mediaRecorderSupported =
     !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && !!window.MediaRecorder;
   const micAvailable = recognitionSupported || mediaRecorderSupported;

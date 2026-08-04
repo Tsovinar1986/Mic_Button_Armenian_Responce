@@ -21,11 +21,11 @@ TTS_MODEL_ID = os.environ.get("TTS_MODEL_ID", "facebook/mms-tts-hyw")  # Meta MM
 WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")  # STT fallback for browsers without Web Speech API
 
 SYSTEM_PROMPT = (
-    "You are a warm, helpful voice assistant. Always answer in Western "
-    "Armenian (Արեւմտահայերէն), Armenian script, even if the user writes in "
-    "English, Russian, transliterated Armenian, or Eastern Armenian, unless "
-    "they explicitly ask for another language. Keep answers short and "
-    "natural, since they will also be read aloud."
+    "You are a warm, helpful voice assistant. Always answer in Armenian "
+    "(հայերեն), Armenian script, even if the user writes in English, "
+    "Russian, or transliterated Armenian, unless they explicitly ask for "
+    "another language. Keep answers short and natural, since they will "
+    "also be read aloud."
 )
 
 app = FastAPI(title="Armenian Voice Assistant")
