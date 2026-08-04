@@ -43,7 +43,15 @@ reply back in Armenian.
 
 ## Known limitation: local Armenian LLM quality
 
-Tested against the models already pulled in your Ollama:
+The system prompt asks for **Western Armenian** specifically (to match the
+TTS voice, see above), but this doesn't fix the underlying reliability
+problem — it's not a prompt-wording issue. The same model, same prompt, same
+kind of question can come back perfectly clean Armenian one call and
+garbled-with-stray-Chinese-characters-and-English-fragments the next. Making
+the prompt more elaborate (explicitly naming "classical Mesropian
+orthography" etc.) made a weak model's output *worse*, not better — small
+models seem to do best with short, plain instructions. Tested against the
+models already pulled in your Ollama:
 
 - `qwen2.5:3b` → produces broken/garbled Armenian (mixed-in stray
   characters), unusable as-is.
