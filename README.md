@@ -192,6 +192,10 @@ Python — see `backend/requirements.txt`). Frontend deps go in
    On Windows, double-click `start.bat` (or run `start.ps1` directly in
    PowerShell) — same behavior as `start.sh`, backend port `:8191` fixed
    either way so it never collides with the frontend's `:5178`.
+
+   Backend only, without Vite: `cd backend && python3 app.py` also works
+   directly (no `--reload` though — use `uvicorn backend.app:app --reload`
+   from the project root, or `../start.sh`, if you want that).
 4. Open **http://localhost:5178** in any modern browser — Chrome/Edge use
    native speech recognition for the mic button, Safari/Firefox use the
    Whisper fallback automatically. Port `:8191` was picked to avoid clashing

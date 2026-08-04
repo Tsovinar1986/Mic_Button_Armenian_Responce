@@ -3,6 +3,7 @@ import logging
 import os
 import tempfile
 import threading
+from contextlib import asynccontextmanager
 from typing import List, Optional
 
 import requests
@@ -28,7 +29,18 @@ SYSTEM_PROMPT = (
     "also be read aloud."
 )
 
-app = FastAPI(title="Armenian Voice Assistant")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load the TTS/STT models in the background so the first real request
+    # isn't slow. _load_tts/_load_stt are defined further down, but that's
+    # fine - this only runs at startup, well after the whole module (and
+    # both functions) have finished being defined.
+    threading.Thread(target=_load_tts, daemon=True).start()
+    threading.Thread(target=_load_stt, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Armenian Voice Assistant", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -169,12 +181,6 @@ def _load_tts():
     return _tts_model, _tts_tokenizer
 
 
-@app.on_event("startup")
-def warm_up_tts():
-    # Load the TTS model in the background so the first real request isn't slow.
-    threading.Thread(target=_load_tts, daemon=True).start()
-
-
 # ---- Speech-to-text (faster-whisper), for browsers without Web Speech API ----
 _stt_model = None
 _stt_lock = threading.Lock()
@@ -192,11 +198,6 @@ def _load_stt():
             _stt_model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
             log.info("Whisper STT model ready.")
     return _stt_model
-
-
-@app.on_event("startup")
-def warm_up_stt():
-    threading.Thread(target=_load_stt, daemon=True).start()
 
 
 @app.post("/api/transcribe")
@@ -248,3 +249,11 @@ def speak(req: SpeakRequest):
 # ---- Serve the frontend ----
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+
+
+if __name__ == "__main__":
+    # Lets `python3 app.py` work directly (no --reload here; use
+    # `uvicorn backend.app:app --reload`, or ../start.sh, for that).
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8191)))
