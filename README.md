@@ -11,11 +11,26 @@ app anymore — see "Audio output" below.
   automatically falls back to recording audio and sending it to the backend
   for transcription. A text box covers typed input too. Replies are
   text-only — no audio is played back in the browser.
-- **Backend**: `backend/app.py` — FastAPI on `:8008`. Talks to a local
+- **Backend**: `backend/app.py` — FastAPI on `:8191`. Talks to a local
   **Ollama** server for the LLM reply and to a local **Whisper** model
   (`faster-whisper`) for the Safari/Firefox speech-to-text fallback. It also
-  serves `frontend/` as static files, so `:8008` alone works too if you
+  serves `frontend/` as static files, so `:8191` alone works too if you
   don't want to run Vite.
+
+See [PRIVACY.md](PRIVACY.md) for exactly what happens to your voice/text
+data (short version: everything stays local except Chrome/Edge's native mic
+transcription, which is Google's, not this app's).
+
+## Design
+
+Colors/layout are unified with the sibling `Speach_to_text_upload_video_document`
+app — same violet+teal accent palette, flat dark background with blurred
+`.bg-blob` accents instead of a busy multi-color gradient, and the same
+light-mode override via `prefers-color-scheme`, which this app didn't have
+before. Chosen over this app's original 3-accent (violet/pink/cyan) look
+because the shared one is calmer, more consistent as part of the same
+Armenian-app family, and — unlike the original — actually supports light
+mode. If you tweak one app's palette, update the other to match.
 
 ## Audio output
 
@@ -132,24 +147,34 @@ Python — see `backend/requirements.txt`). Frontend deps go in
 
 1. First time only:
    ```bash
+   # Mac/Linux
    python3 -m venv venv
    ./venv/bin/pip install -r backend/requirements.txt
    cd frontend && npm install && cd ..
+   ```
+   ```powershell
+   # Windows
+   python -m venv venv
+   .\venv\Scripts\pip install -r backend\requirements.txt
+   cd frontend; npm install; cd ..
    ```
 2. Make sure Ollama is running and has at least one model pulled:
    ```bash
    ollama serve &          # if not already running
    ollama pull qwen2.5:3b  # or gemma2:2b, qwen2.5:7b, etc.
    ```
-3. Start everything (backend on `:8008` + Vite on `:5178`):
+3. Start everything (backend on `:8191` + Vite on `:5178`):
    ```bash
-   ./start.sh
+   ./start.sh          # Mac/Linux
    ```
+   On Windows, double-click `start.bat` (or run `start.ps1` directly in
+   PowerShell) — same behavior as `start.sh`, backend port `:8191` fixed
+   either way so it never collides with the frontend's `:5178`.
 4. Open **http://localhost:5178** in any modern browser — Chrome/Edge use
    native speech recognition for the mic button, Safari/Firefox use the
-   Whisper fallback automatically. Ports were picked to avoid clashing with
-   your other local projects (`:8001` BetterTalkNowAI, `:8000/:5173` etc.
-   elsewhere).
+   Whisper fallback automatically. Port `:8191` was picked to avoid clashing
+   with your other local projects (`:8001` BetterTalkNowAI, `:8000/:5173`
+   etc. elsewhere).
 
 First mic use in Safari/Firefox (~10-20s) will be slow while the Whisper
 model downloads and loads into memory; it's cached in RAM after that for the

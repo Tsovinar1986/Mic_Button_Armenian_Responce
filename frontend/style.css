@@ -1,18 +1,17 @@
+/* Shared palette with the Speech-to-Text sibling app: violet + teal accents,
+   flat dark background with soft blurred blobs, and a light-mode override —
+   kept in sync with frontend/style.css in Speach_to_text_upload_video_document. */
 :root {
-  --bg-1: #0b0f1e;
-  --bg-2: #1a1040;
-  --bg-3: #2d0f4a;
-  --accent: #8b5cf6;
-  --accent-2: #ec4899;
-  --accent-3: #22d3ee;
+  --bg: #0f1220;
   --surface: rgba(255, 255, 255, 0.06);
   --surface-strong: rgba(255, 255, 255, 0.1);
   --border: rgba(255, 255, 255, 0.12);
-  --text: #f4f2fb;
-  --text-dim: #a9a3c4;
-  --ok: #34d399;
-  --err: #f87171;
-  --radius: 20px;
+  --text: #f2f3f7;
+  --text-dim: #a6a9bd;
+  --accent: #7c6cff;
+  --accent-2: #37d6c4;
+  --danger: #ff6b6b;
+  --radius: 18px;
 }
 
 * { box-sizing: border-box; }
@@ -25,18 +24,30 @@ html, body {
 body {
   font-family: "Segoe UI", "Noto Sans Armenian", -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--text);
-  background:
-    radial-gradient(60% 50% at 15% 10%, rgba(139, 92, 246, 0.35), transparent),
-    radial-gradient(50% 45% at 85% 15%, rgba(236, 72, 153, 0.28), transparent),
-    radial-gradient(60% 60% at 50% 100%, rgba(34, 211, 238, 0.18), transparent),
-    linear-gradient(160deg, var(--bg-1), var(--bg-2) 55%, var(--bg-3));
-  background-attachment: fixed;
+  background: var(--bg);
   min-height: 100vh;
   display: flex;
   justify-content: center;
+  overflow-x: hidden;
+  position: relative;
 }
 
+.bg-blob {
+  position: fixed;
+  width: 480px;
+  height: 480px;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.35;
+  z-index: 0;
+  pointer-events: none;
+}
+.blob-1 { background: var(--accent); top: -120px; left: -100px; }
+.blob-2 { background: var(--accent-2); bottom: -140px; right: -100px; }
+
 .app {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 760px;
   min-height: 100vh;
@@ -70,7 +81,7 @@ body {
   height: 12px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 0 14px 2px rgba(236, 72, 153, 0.6);
+  box-shadow: 0 0 14px 2px rgba(55, 214, 196, 0.5);
 }
 
 .brand h1 {
@@ -78,6 +89,10 @@ body {
   font-weight: 600;
   margin: 0;
   letter-spacing: 0.2px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .topbar-right {
@@ -95,8 +110,8 @@ body {
 }
 
 .status-unknown { color: var(--text-dim); }
-.status-ok { color: var(--ok); border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.08); }
-.status-bad { color: var(--err); border-color: rgba(248, 113, 113, 0.4); background: rgba(248, 113, 113, 0.08); }
+.status-ok { color: var(--accent-2); border-color: rgba(55, 214, 196, 0.4); background: rgba(55, 214, 196, 0.1); }
+.status-bad { color: var(--danger); border-color: rgba(255, 107, 107, 0.35); background: rgba(255, 107, 107, 0.1); }
 
 /* ---------- Chat shell ---------- */
 .chat-shell {
@@ -118,7 +133,7 @@ body {
 }
 
 .chat::-webkit-scrollbar { width: 6px; }
-.chat::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+.chat::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 3px; }
 
 .msg {
   max-width: 78%;
@@ -139,9 +154,9 @@ body {
 .msg.user {
   align-self: flex-end;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: white;
+  color: #ffffff;
   border-bottom-right-radius: 6px;
-  box-shadow: 0 8px 24px -8px rgba(139, 92, 246, 0.6);
+  box-shadow: 0 8px 24px -8px rgba(124, 108, 255, 0.5);
 }
 
 .msg.assistant {
@@ -169,7 +184,6 @@ body {
   letter-spacing: 0.3px;
 }
 
-
 .typing-dots {
   display: inline-flex;
   gap: 4px;
@@ -193,9 +207,9 @@ body {
   margin: 0 auto 10px;
   padding: 6px 14px;
   border-radius: 999px;
-  background: rgba(236, 72, 153, 0.12);
-  border: 1px solid rgba(236, 72, 153, 0.35);
-  color: #fbcfe8;
+  background: rgba(55, 214, 196, 0.12);
+  border: 1px solid rgba(55, 214, 196, 0.35);
+  color: var(--accent-2);
   font-size: 0.8rem;
 }
 .listening-banner.hidden { display: none; }
@@ -206,9 +220,9 @@ body {
   animation: pulse-dot 1s infinite;
 }
 @keyframes pulse-dot {
-  0% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.6); }
-  70% { box-shadow: 0 0 0 8px rgba(236, 72, 153, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(236, 72, 153, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(55, 214, 196, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(55, 214, 196, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(55, 214, 196, 0); }
 }
 
 /* ---------- Composer ---------- */
@@ -246,9 +260,9 @@ body {
 .send-btn {
   width: 44px; height: 44px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), var(--accent-3));
-  color: white;
-  transition: transform 0.15s ease;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #ffffff;
+  transition: transform 0.15s ease, opacity 0.2s ease;
 }
 .send-btn svg { width: 19px; height: 19px; }
 .send-btn:hover { transform: scale(1.06); }
@@ -258,7 +272,7 @@ body {
   position: relative;
   width: 50px; height: 50px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b2a6b, #201641);
+  background: var(--surface-strong);
   color: var(--text);
   border: 1px solid var(--border);
   transition: transform 0.15s ease, background 0.2s ease, color 0.2s ease;
@@ -277,7 +291,7 @@ body {
 
 .mic-btn.listening {
   background: linear-gradient(135deg, var(--accent-2), var(--accent));
-  color: white;
+  color: #ffffff;
 }
 .mic-btn.listening .ring1 {
   animation: ring-pulse 1.6s ease-out infinite;
@@ -297,6 +311,18 @@ body {
   color: var(--text-dim);
   margin: 10px 0 0;
   min-height: 1em;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f5fb;
+    --surface: rgba(255, 255, 255, 0.75);
+    --surface-strong: rgba(255, 255, 255, 0.9);
+    --border: rgba(15, 18, 32, 0.08);
+    --text: #16182b;
+    --text-dim: #63667d;
+  }
+  .chat::-webkit-scrollbar-thumb { background: rgba(15, 18, 32, 0.15); }
 }
 
 @media (max-width: 480px) {
