@@ -221,7 +221,13 @@ the same reason, in case you call `/api/speak` directly.
 - `OLLAMA_MODEL` — default `qwen2.5:7b` (used when the UI doesn't pass a model)
 - `TTS_MODEL_ID` — default `facebook/mms-tts-hyw`
 - `WHISPER_MODEL_SIZE` — default `small` (Safari/Firefox STT fallback; larger
-  = more accurate but slower on CPU)
+  = more accurate but slower on CPU). Western Armenian is low-resource for
+  Whisper, and `small` can garble or hallucinate short phrases entirely
+  (e.g. "Բարև ոնց ես" transcribed as unrelated, mixed-script gibberish)
+  instead of failing cleanly. If that happens often, set
+  `WHISPER_MODEL_SIZE=medium` (or `large-v3`) before starting the backend —
+  slower and more RAM, but much more reliable on short Armenian input.
+  Chrome/Edge don't hit this at all since they skip Whisper entirely.
 
 ## API
 
