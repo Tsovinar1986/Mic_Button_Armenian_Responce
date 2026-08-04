@@ -17,6 +17,28 @@ app anymore — see "Audio output" below.
   serves `frontend/` as static files, so `:8191` alone works too if you
   don't want to run Vite.
 
+## Project structure
+
+```
+MIC_Button_Trying_response_Armenian/
+├── backend/
+│   ├── app.py              # FastAPI app: /api/chat, /api/speak, /api/transcribe, /api/health, /api/models
+│   └── requirements.txt
+├── frontend/
+│   ├── index.html
+│   ├── app.js               # chat UI, mic input (native + Whisper fallback), no audio playback
+│   ├── style.css
+│   ├── vite.config.js        # dev server on :5178, proxies /api to :8191
+│   └── package.json
+├── venv/                    # local Python virtualenv (gitignored)
+├── start.sh                  # Mac/Linux launcher (backend :8191 + Vite :5178)
+├── start.ps1                 # Windows launcher (same behavior as start.sh)
+├── start.bat                  # double-click wrapper for start.ps1
+├── PRIVACY.md
+├── .gitignore
+└── README.md
+```
+
 See [PRIVACY.md](PRIVACY.md) for exactly what happens to your voice/text
 data (short version: everything stays local except Chrome/Edge's native mic
 transcription, which is Google's, not this app's).
