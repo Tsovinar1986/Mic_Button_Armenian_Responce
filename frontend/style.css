@@ -86,24 +86,6 @@ body {
   gap: 10px;
 }
 
-.model-picker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.78rem;
-  color: var(--text-dim);
-}
-
-.model-picker select {
-  background: var(--surface-strong);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 0.78rem;
-  max-width: 160px;
-}
-
 .status-pill {
   font-size: 0.72rem;
   padding: 5px 11px;
@@ -334,6 +316,5 @@ body {
 
 @media (max-width: 480px) {
   .brand h1 { font-size: 0.85rem; }
-  .model-picker span { display: none; }
   .msg { max-width: 88%; }
 }

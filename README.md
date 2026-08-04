@@ -18,9 +18,10 @@ reply back in Armenian.
 
 ## Why these choices
 
-- **LLM**: routed through Ollama so you can swap models freely — the model
-  picker in the top bar lists whatever you've `ollama pull`ed and lets you
-  compare Armenian quality live. See "Known limitation" below.
+- **LLM**: routed through Ollama, fixed to `OLLAMA_MODEL` (env var, default
+  `qwen2.5:3b`) — no model picker in the UI. Change it with `ollama pull` +
+  restarting the backend with a different `OLLAMA_MODEL`. See "Known
+  limitation" below for why none of the current options are great.
 - **STT (mic → text)**: browser Web Speech API first choice — zero backend
   cost, streams audio to Google's servers for recognition (needs internet,
   behaves the same on Mac and Windows). Only implemented in Chromium browsers
@@ -31,12 +32,28 @@ reply back in Armenian.
 - **TTS (text → voice)**: backend model `facebook/mms-tts-hyw` (Meta MMS),
   with a fallback to the browser's own `speechSynthesis` if the backend call
   fails for any reason. The backend path runs in Python and sounds identical
-  on Mac and Windows. Note: MMS only ships a **Western Armenian** voice —
-  there is no Eastern Armenian TTS model in that family, so the accent will
-  sound Western-Armenian rather than the Yerevan-standard dialect. The browser
-  fallback voice is OS-dependent, and neither macOS nor Windows ships a native
-  Armenian system voice by default — so treat it as a last resort, not a
-  reliable Armenian voice.
+  on Mac and Windows. This is the only Western Armenian voice used — no
+  Eastern Armenian option exists or is used anywhere in this app.
+
+  **License heads-up**: `facebook/mms-tts-hyw` is **CC-BY-NC-4.0
+  (non-commercial only)** — fine for personal/research use, but not for a
+  product you'd sell or monetize. I searched HuggingFace for a permissively-
+  licensed alternative and didn't find one: the one other Armenian TTS
+  checkpoint I found (`davit312/piper-TTS-Armenian`, GPL-2.0) turned out to
+  be **Eastern** Armenian (`hy_AM`) despite the better license, so it's not a
+  substitute. There's also no free, unrestricted Western Armenian speech
+  dataset to train a new one from — HuggingFace/Common Voice's only open
+  Armenian speech corpus (`Chillarmo/common_voice_20_armenian`, CC0) is
+  Eastern Armenian too. Western Armenian is a genuinely low-resource dialect
+  for open datasets. If you outgrow the non-commercial license, the real
+  options are: (a) get a commercial license/quote from Meta for MMS, or (b)
+  fund/collect a Western Armenian voice dataset (e.g. commission a native
+  speaker for a few hours of recorded, transcribed speech) and fine-tune an
+  open toolkit like [Piper](https://github.com/rhasspy/piper) (MIT-licensed)
+  on it — that's a real data-collection project, not a code change.
+  The browser fallback voice is OS-dependent, and neither macOS nor Windows
+  ships a native Armenian system voice by default — treat it as a last
+  resort, not a reliable Armenian voice.
 - The `tencent/Hy-Embodied-VLM-1.0` link isn't used here — that model is a
   robotics vision-language-action model (controls robot arms from camera
   frames), not a text/voice chat model, so it doesn't fit this use case.
@@ -65,12 +82,11 @@ models already pulled in your Ollama:
   notes in the sibling legal project, these degrade into gibberish after the
   first clause — same underlying issue, not fixed by this project.
 
-The UI's model dropdown exists specifically so you can `ollama pull` other
-candidates (e.g. `gemma2:2b`, `gemma2:9b`, `aya-expanse`, `command-r`) and
-compare their Armenian output live without touching code. In practice,
-small (2–4B) open models are generally weak at Armenian; if quality matters,
-plan on either a larger model (7B+) or a model specifically fine-tuned for
-Armenian.
+To compare another model's Armenian output, `ollama pull` it (e.g.
+`gemma2:9b`, `aya-expanse`, `command-r`), set `OLLAMA_MODEL` to its name, and
+restart the backend. In practice, small (2–4B) open models are generally
+weak at Armenian; if quality matters, plan on either a larger model (7B+) or
+a model specifically fine-tuned for Armenian.
 
 ## Setup
 
@@ -115,8 +131,9 @@ on disk (`~/.cache/huggingface`) for future runs.
 ## API
 
 - `GET /api/health` — Ollama connectivity + available models
-- `GET /api/models` — list of pulled Ollama models
-- `POST /api/chat` `{message, model?, history?}` → `{reply, model}`
+- `GET /api/models` — list of pulled Ollama models (debugging only, not used by the UI)
+- `POST /api/chat` `{message, model?, history?}` → `{reply, model}` — `model`
+  is optional and only useful for scripting/testing; the UI never sends it
 - `POST /api/speak` `{text}` → `audio/wav` bytes
 - `POST /api/transcribe` (multipart, field `audio`) → `{text}` — Whisper
   fallback used by browsers without Web Speech Recognition

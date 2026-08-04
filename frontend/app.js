@@ -3,7 +3,6 @@
   const composer = document.getElementById("composer");
   const textInput = document.getElementById("textInput");
   const micBtn = document.getElementById("micBtn");
-  const modelSelect = document.getElementById("modelSelect");
   const statusPill = document.getElementById("statusPill");
   const listeningBanner = document.getElementById("listeningBanner");
   const interimText = document.getElementById("interimText");
@@ -55,27 +54,18 @@
   }
 
   // ---------------- Backend calls ----------------
-  async function loadHealthAndModels() {
+  async function loadHealth() {
     try {
-      const res = await fetch("/api/models");
+      const res = await fetch("/api/health");
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
-      modelSelect.innerHTML = "";
-      data.models.forEach((name) => {
-        const opt = document.createElement("option");
-        opt.value = name;
-        opt.textContent = name;
-        if (name === data.default_model) opt.selected = true;
-        modelSelect.appendChild(opt);
-      });
-      if (!data.models.length) {
-        const opt = document.createElement("option");
-        opt.textContent = "no models pulled";
-        modelSelect.appendChild(opt);
+      if (data.ollama) {
+        setStatus("ok", `Connected · ${data.models.length} model(s) available`);
+      } else {
+        setStatus("bad", "Ollama unreachable");
       }
-      setStatus("ok", `Ollama connected · ${data.models.length} model(s)`);
     } catch (e) {
-      setStatus("bad", "Ollama unreachable");
+      setStatus("bad", "Backend unreachable");
     }
   }
 
@@ -95,7 +85,6 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
-          model: modelSelect.value || undefined,
           history: history.slice(0, -1),
         }),
       });
@@ -320,7 +309,7 @@
     "assistant",
     "Բարև ձեզ։ Ես ձեր հայալեզու ձայնային օգնականն եմ։ Կարող եք գրել կամ սեղմել մայկը՝ ինձ հետ խոսելու համար։"
   );
-  loadHealthAndModels();
+  loadHealth();
   if (window.speechSynthesis) {
     // Some browsers load voices asynchronously.
     window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
