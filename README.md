@@ -5,24 +5,29 @@ reply back in Armenian.
 
 - **Frontend**: `frontend/` — plain HTML/CSS/JS served via a **Vite** dev
   server on `:5178` (proxies `/api/*` to the backend, so no CORS setup
-  needed). Mic button uses the browser's Web Speech Recognition API
-  (Chromium-only) for voice input; a text box covers typed input too. Every
-  reply is shown as text *and* spoken aloud.
+  needed). Mic button prefers the browser's Web Speech Recognition API
+  (Chrome/Edge); in Safari/Firefox, where that API doesn't exist, it
+  automatically falls back to recording audio and sending it to the backend
+  for transcription. A text box covers typed input too. Every reply is shown
+  as text *and* spoken aloud.
 - **Backend**: `backend/app.py` — FastAPI on `:8008`. Talks to a local
-  **Ollama** server for the LLM reply, and to Meta's **MMS-TTS** model for
-  Armenian speech synthesis. It also serves `frontend/` as static files, so
-  `:8008` alone works too if you don't want to run Vite.
+  **Ollama** server for the LLM reply, to Meta's **MMS-TTS** model for
+  Armenian speech synthesis, and to a local **Whisper** model (`faster-whisper`)
+  for the Safari/Firefox speech-to-text fallback. It also serves `frontend/`
+  as static files, so `:8008` alone works too if you don't want to run Vite.
 
 ## Why these choices
 
 - **LLM**: routed through Ollama so you can swap models freely — the model
   picker in the top bar lists whatever you've `ollama pull`ed and lets you
   compare Armenian quality live. See "Known limitation" below.
-- **STT (mic → text)**: browser Web Speech API, per your choice — zero backend
-  cost. Only works in Chromium browsers (Chrome, Edge) on either Mac or
-  Windows — Safari support is spotty and Firefox has none. It streams audio
-  to Google's servers for recognition rather than using an OS speech pack, so
-  it needs internet access but behaves the same on Mac and Windows.
+- **STT (mic → text)**: browser Web Speech API first choice — zero backend
+  cost, streams audio to Google's servers for recognition (needs internet,
+  behaves the same on Mac and Windows). Only implemented in Chromium browsers
+  though, so Safari and Firefox fall back to `MediaRecorder` + a local
+  **Whisper** model (`faster-whisper`, `small` size, CPU, Armenian language
+  hint) on the backend — slower (few seconds of processing after you stop
+  talking) and fully offline once the model is downloaded once.
 - **TTS (text → voice)**: backend model `facebook/mms-tts-hyw` (Meta MMS),
   with a fallback to the browser's own `speechSynthesis` if the backend call
   fails for any reason. The backend path runs in Python and sounds identical
@@ -80,20 +85,24 @@ Python — see `backend/requirements.txt`). Frontend deps go in
    ```bash
    ./start.sh
    ```
-4. Open **http://localhost:5178** in Chrome or Edge (needed for the mic
-   button — Web Speech Recognition isn't supported in Safari/Firefox). Ports
-   were picked to avoid clashing with your other local projects
-   (`:8001` BetterTalkNowAI, `:8000/:5173` etc. elsewhere).
+4. Open **http://localhost:5178** in any modern browser — Chrome/Edge use
+   native speech recognition for the mic button, Safari/Firefox use the
+   Whisper fallback automatically. Ports were picked to avoid clashing with
+   your other local projects (`:8001` BetterTalkNowAI, `:8000/:5173` etc.
+   elsewhere).
 
-The first spoken reply will take ~30–60s while the TTS model downloads and
-loads into memory; it's cached in RAM after that (fast for the rest of the
-session), and cached on disk (`~/.cache/huggingface`) for future runs.
+The first spoken reply (~30–60s) and first mic use in Safari/Firefox
+(~10-20s) will be slow while the TTS/Whisper models download and load into
+memory; both are cached in RAM after that for the rest of the session, and
+on disk (`~/.cache/huggingface`) for future runs.
 
 ## Config (env vars, optional)
 
 - `OLLAMA_URL` — default `http://localhost:11434`
 - `OLLAMA_MODEL` — default `qwen2.5:3b` (used when the UI doesn't pass a model)
 - `TTS_MODEL_ID` — default `facebook/mms-tts-hyw`
+- `WHISPER_MODEL_SIZE` — default `small` (Safari/Firefox STT fallback; larger
+  = more accurate but slower on CPU)
 
 ## API
 
@@ -101,3 +110,5 @@ session), and cached on disk (`~/.cache/huggingface`) for future runs.
 - `GET /api/models` — list of pulled Ollama models
 - `POST /api/chat` `{message, model?, history?}` → `{reply, model}`
 - `POST /api/speak` `{text}` → `audio/wav` bytes
+- `POST /api/transcribe` (multipart, field `audio`) → `{text}` — Whisper
+  fallback used by browsers without Web Speech Recognition

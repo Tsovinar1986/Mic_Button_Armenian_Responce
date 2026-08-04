@@ -117,7 +117,7 @@
       addMessage("system", `Network error: ${e.message}`);
     } finally {
       busy = false;
-      micBtn.disabled = !recognitionSupported;
+      micBtn.disabled = !micAvailable;
     }
   }
 
@@ -165,10 +165,25 @@
   // ---------------- Speech recognition (mic input) ----------------
   const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
   const recognitionSupported = !!SpeechRecognitionImpl;
+  const mediaRecorderSupported =
+    !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && !!window.MediaRecorder;
+  const micAvailable = recognitionSupported || mediaRecorderSupported;
   let recognition = null;
   let listening = false;
 
+  function showListening(label) {
+    micBtn.classList.add("listening");
+    listeningBanner.classList.remove("hidden");
+    interimText.textContent = label;
+  }
+
+  function hideListening() {
+    micBtn.classList.remove("listening");
+    listeningBanner.classList.add("hidden");
+  }
+
   if (recognitionSupported) {
+    // Preferred path: native browser speech recognition (Chrome, Edge).
     recognition = new SpeechRecognitionImpl();
     recognition.lang = "hy-AM";
     recognition.continuous = false;
@@ -176,9 +191,7 @@
 
     recognition.onstart = () => {
       listening = true;
-      micBtn.classList.add("listening");
-      listeningBanner.classList.remove("hidden");
-      interimText.textContent = "Listening…";
+      showListening("Listening…");
     };
 
     recognition.onresult = (event) => {
@@ -201,8 +214,7 @@
 
     recognition.onend = () => {
       listening = false;
-      micBtn.classList.remove("listening");
-      listeningBanner.classList.add("hidden");
+      hideListening();
       const finalText = textInput.value.trim();
       if (finalText) sendMessage(finalText);
     };
@@ -219,10 +231,88 @@
         }
       }
     });
-  } else {
+  } else if (mediaRecorderSupported) {
+    // Fallback path: record audio and transcribe it on the backend (Whisper).
+    // Needed for Safari/Firefox, which don't implement SpeechRecognition.
+    let mediaRecorder = null;
+    let chunks = [];
+    let stream = null;
+
+    function pickMimeType() {
+      const candidates = ["audio/mp4", "audio/webm", "audio/ogg"];
+      return candidates.find((t) => window.MediaRecorder.isTypeSupported(t)) || "";
+    }
+
+    async function startRecording() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        interimText.textContent = "Microphone permission denied.";
+        listeningBanner.classList.remove("hidden");
+        setTimeout(() => listeningBanner.classList.add("hidden"), 2500);
+        return;
+      }
+      const mimeType = pickMimeType();
+      chunks = [];
+      mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        hideListening();
+        if (!chunks.length) return;
+
+        showListening("Transcribing…");
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
+        const form = new FormData();
+        const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+        form.append("audio", blob, `speech.${ext}`);
+
+        try {
+          const res = await fetch("/api/transcribe", { method: "POST", body: form });
+          hideListening();
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            addMessage("system", `Transcription error: ${err.detail || res.statusText}`);
+            return;
+          }
+          const data = await res.json();
+          const text = (data.text || "").trim();
+          if (text) {
+            textInput.value = text;
+            sendMessage(text);
+          } else {
+            addMessage("system", "Didn't catch that — please try again or type your message.");
+          }
+        } catch (e) {
+          hideListening();
+          addMessage("system", `Transcription network error: ${e.message}`);
+        }
+      };
+      mediaRecorder.start();
+      listening = true;
+      showListening("Listening…");
+    }
+
+    function stopRecording() {
+      listening = false;
+      if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+    }
+
+    micBtn.addEventListener("click", () => {
+      if (listening) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    });
+  }
+
+  if (!micAvailable) {
     micBtn.disabled = true;
     supportNote.textContent =
-      "Voice input isn't supported in this browser — try Chrome. You can still type in Armenian below.";
+      "Voice input isn't supported in this browser — try Chrome, Edge, or Safari. You can still type in Armenian below.";
   }
 
   // ---------------- Init ----------------

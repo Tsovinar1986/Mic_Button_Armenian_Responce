@@ -1,11 +1,12 @@
 import io
 import logging
 import os
+import tempfile
 import threading
 from typing import List, Optional
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +18,7 @@ log = logging.getLogger("voice-assistant")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
 TTS_MODEL_ID = os.environ.get("TTS_MODEL_ID", "facebook/mms-tts-hyw")  # Meta MMS only ships Western Armenian TTS
+WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")  # STT fallback for browsers without Web Speech API
 
 SYSTEM_PROMPT = (
     "You are a warm, helpful voice assistant. Always answer in Armenian "
@@ -69,6 +71,7 @@ def health():
         "models": models,
         "default_model": DEFAULT_MODEL,
         "tts_loaded": _tts_model is not None,
+        "stt_loaded": _stt_model is not None,
     }
 
 
@@ -136,6 +139,50 @@ def _load_tts():
 def warm_up_tts():
     # Load the TTS model in the background so the first real request isn't slow.
     threading.Thread(target=_load_tts, daemon=True).start()
+
+
+# ---- Speech-to-text (faster-whisper), for browsers without Web Speech API ----
+_stt_model = None
+_stt_lock = threading.Lock()
+
+
+def _load_stt():
+    global _stt_model
+    if _stt_model is not None:
+        return _stt_model
+    with _stt_lock:
+        if _stt_model is None:
+            log.info("Loading Whisper STT model (%s) ...", WHISPER_MODEL_SIZE)
+            from faster_whisper import WhisperModel
+
+            _stt_model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+            log.info("Whisper STT model ready.")
+    return _stt_model
+
+
+@app.on_event("startup")
+def warm_up_stt():
+    threading.Thread(target=_load_stt, daemon=True).start()
+
+
+@app.post("/api/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    data = await audio.read()
+    if not data:
+        raise HTTPException(400, "empty audio upload")
+
+    suffix = os.path.splitext(audio.filename or "")[1] or ".webm"
+    try:
+        model = _load_stt()
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as tmp:
+            tmp.write(data)
+            tmp.flush()
+            segments, _info = model.transcribe(tmp.name, language="hy", vad_filter=True)
+            text = " ".join(seg.text.strip() for seg in segments).strip()
+        return {"text": text}
+    except Exception as e:
+        log.exception("Transcription failed")
+        raise HTTPException(500, f"Transcription failed: {e}")
 
 
 @app.post("/api/speak")
