@@ -7,7 +7,6 @@
   const listeningBanner = document.getElementById("listeningBanner");
   const interimText = document.getElementById("interimText");
   const supportNote = document.getElementById("supportNote");
-  const ttsAudio = document.getElementById("ttsAudio");
 
   const history = []; // {role, content}
   let busy = false;
@@ -19,15 +18,6 @@
     const textNode = document.createElement("span");
     textNode.textContent = content;
     div.appendChild(textNode);
-
-    if (role === "assistant") {
-      const btn = document.createElement("button");
-      btn.className = "speaker-btn";
-      btn.type = "button";
-      btn.innerHTML = "🔊 Listen";
-      btn.addEventListener("click", () => speak(content, btn));
-      div.appendChild(btn);
-    }
 
     chatEl.appendChild(div);
     chatEl.scrollTop = chatEl.scrollHeight;
@@ -98,9 +88,7 @@
 
       const data = await res.json();
       history.push({ role: "assistant", content: data.reply });
-      const bubble = addMessage("assistant", data.reply);
-      const speakerBtn = bubble.querySelector(".speaker-btn");
-      speak(data.reply, speakerBtn);
+      addMessage("assistant", data.reply);
     } catch (e) {
       removeTypingIndicator();
       addMessage("system", `Network error: ${e.message}`);
@@ -114,42 +102,6 @@
     e.preventDefault();
     sendMessage(textInput.value);
   });
-
-  // ---------------- Text-to-speech ----------------
-  async function speak(text, btn) {
-    if (btn) btn.classList.add("speaking");
-
-    // 1) Try backend Armenian TTS (Meta MMS-TTS)
-    try {
-      const res = await fetch("/api/speak", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (res.ok) {
-        const blob = await res.blob();
-        ttsAudio.src = URL.createObjectURL(blob);
-        await ttsAudio.play();
-        ttsAudio.onended = () => btn && btn.classList.remove("speaking");
-        return;
-      }
-    } catch (e) {
-      // fall through to browser TTS
-    }
-
-    // 2) Fallback: browser speech synthesis
-    if ("speechSynthesis" in window) {
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = "hyw"; // Western Armenian, matching the backend MMS-TTS voice
-      const voices = window.speechSynthesis.getVoices();
-      const hyVoice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("hy"));
-      if (hyVoice) utter.voice = hyVoice;
-      utter.onend = () => btn && btn.classList.remove("speaking");
-      window.speechSynthesis.speak(utter);
-    } else if (btn) {
-      btn.classList.remove("speaking");
-    }
-  }
 
   // ---------------- Speech recognition (mic input) ----------------
   // Safari exposes `webkitSpeechRecognition` in the DOM but it doesn't
@@ -315,8 +267,4 @@
     "Բարև ձեզ։ Ես ձեր հայալեզու ձայնային օգնականն եմ։ Կարող եք գրել կամ սեղմել մայկը՝ ինձ հետ խոսելու համար։"
   );
   loadHealth();
-  if (window.speechSynthesis) {
-    // Some browsers load voices asynchronously.
-    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-  }
 })();

@@ -1,20 +1,31 @@
 # Armenian Voice Assistant — Mic Button
 
-A mic-button voice assistant: speak or type in Armenian, get a text + spoken
-reply back in Armenian.
+A mic-button voice assistant: speak or type in Armenian, get a **text-only**
+reply back in Armenian. Voice *output* is intentionally not wired up in this
+app anymore — see "Audio output" below.
 
 - **Frontend**: `frontend/` — plain HTML/CSS/JS served via a **Vite** dev
   server on `:5178` (proxies `/api/*` to the backend, so no CORS setup
   needed). Mic button prefers the browser's Web Speech Recognition API
   (Chrome/Edge); in Safari/Firefox, where that API doesn't exist, it
   automatically falls back to recording audio and sending it to the backend
-  for transcription. A text box covers typed input too. Every reply is shown
-  as text *and* spoken aloud.
+  for transcription. A text box covers typed input too. Replies are
+  text-only — no audio is played back in the browser.
 - **Backend**: `backend/app.py` — FastAPI on `:8008`. Talks to a local
-  **Ollama** server for the LLM reply, to Meta's **MMS-TTS** model for
-  Armenian speech synthesis, and to a local **Whisper** model (`faster-whisper`)
-  for the Safari/Firefox speech-to-text fallback. It also serves `frontend/`
-  as static files, so `:8008` alone works too if you don't want to run Vite.
+  **Ollama** server for the LLM reply and to a local **Whisper** model
+  (`faster-whisper`) for the Safari/Firefox speech-to-text fallback. It also
+  serves `frontend/` as static files, so `:8008` alone works too if you
+  don't want to run Vite.
+
+## Audio output
+
+The frontend no longer calls any TTS — replies are text-only by design, so
+you can wire up your own **Piper**-based voice output separately (per your
+plan to train/use Piper directly rather than the non-commercial MMS voice —
+see the license note below). The backend's `POST /api/speak` endpoint
+(Meta MMS-TTS, Western Armenian) is still there and still works if you want
+to call it directly or use it as a reference while you build the Piper
+integration — it's just not wired into the UI anymore.
 
 ## Why these choices
 
@@ -39,11 +50,9 @@ reply back in Armenian.
   gating native recognition on an actual Chromium check (`window.chrome` /
   `Edg/` / `CriOS` in the user agent), not just API presence — Safari now
   correctly falls through to the working Whisper path.
-- **TTS (text → voice)**: backend model `facebook/mms-tts-hyw` (Meta MMS),
-  with a fallback to the browser's own `speechSynthesis` if the backend call
-  fails for any reason. The backend path runs in Python and sounds identical
-  on Mac and Windows. This is the only Western Armenian voice used — no
-  Eastern Armenian option exists or is used anywhere in this app.
+- **TTS (text → voice)**: not used by the frontend (see "Audio output"
+  above). The backend still exposes `facebook/mms-tts-hyw` (Meta MMS) at
+  `POST /api/speak` for anyone who wants to call it directly.
 
   **License heads-up**: `facebook/mms-tts-hyw` is **CC-BY-NC-4.0
   (non-commercial only)** — fine for personal/research use, but not for a
@@ -60,10 +69,8 @@ reply back in Armenian.
   fund/collect a Western Armenian voice dataset (e.g. commission a native
   speaker for a few hours of recorded, transcribed speech) and fine-tune an
   open toolkit like [Piper](https://github.com/rhasspy/piper) (MIT-licensed)
-  on it — that's a real data-collection project, not a code change.
-  The browser fallback voice is OS-dependent, and neither macOS nor Windows
-  ships a native Armenian system voice by default — treat it as a last
-  resort, not a reliable Armenian voice.
+  on it — that's a real data-collection project, not a code change. This is
+  exactly the path you're taking with your own Piper setup.
 - The `tencent/Hy-Embodied-VLM-1.0` link isn't used here — that model is a
   robotics vision-language-action model (controls robot arms from camera
   frames), not a text/voice chat model, so it doesn't fit this use case.
@@ -73,16 +80,30 @@ reply back in Armenian.
 The system prompt now just asks for plain "Armenian" (no dialect specifier),
 which in practice reads as Eastern Armenian — deliberately, since these
 models were more precise and coherent that way. Earlier the prompt forced
-**Western Armenian** specifically to match the TTS voice, but forcing that
-dialect made an already-weak model's output *less* reliable — small models
-seem to have much less Western Armenian in their training data, so asking
-for it added a second hard constraint on top of "be coherent Armenian at
-all" and precision suffered. Net effect: the **displayed/spoken text is
-usually Eastern-flavored Armenian, while the TTS voice is Western
-Armenian** — a real, known mismatch, chosen deliberately in favor of the
-text actually being correct. Making the prompt more elaborate in general
+**Western Armenian** specifically (to match the MMS TTS voice, back when
+that was wired into the UI), but forcing that dialect made an
+already-weak model's output *less* reliable — small models seem to have
+much less Western Armenian in their training data, so asking for it added a
+second hard constraint on top of "be coherent Armenian at all" and
+precision suffered. Net effect: **text output here is Eastern-flavored
+Armenian.** If/when your own Piper voice is Western Armenian, that's a
+known dialect mismatch between this app's text and your audio — worth
+keeping in mind, and something only a genuinely reliable Western-Armenian-
+capable LLM would fix. Making the prompt more elaborate in general
 (explicitly naming "classical Mesropian orthography" etc.) made output
 *worse* too — small models seem to do best with short, plain instructions.
+
+**Automatic correction added**: `/api/chat` now checks what fraction of the
+reply's letters are actually Armenian-script characters (Unicode block
+U+0530–U+058F) and, if that ratio is below 85%, silently retries the same
+request (up to 3 attempts total), keeping whichever attempt scored highest.
+This directly targets the garbled-output failure mode below (stray
+Latin/Cyrillic/CJK/Greek characters mixed into otherwise-Armenian text) —
+it's a real fix for that specific problem, not a prompt tweak, though it
+can't turn an incoherent reply into a correct one, only a script-clean one
+into the response you get. It also means a chat call can now take up to 3x
+longer in the worst case (each retry is a full model call).
+
 Tested against the models already pulled in your Ollama:
 
 - `qwen2.5:3b` → produces broken/garbled Armenian (mixed-in stray
@@ -130,10 +151,11 @@ Python — see `backend/requirements.txt`). Frontend deps go in
    your other local projects (`:8001` BetterTalkNowAI, `:8000/:5173` etc.
    elsewhere).
 
-The first spoken reply (~30–60s) and first mic use in Safari/Firefox
-(~10-20s) will be slow while the TTS/Whisper models download and load into
-memory; both are cached in RAM after that for the rest of the session, and
-on disk (`~/.cache/huggingface`) for future runs.
+First mic use in Safari/Firefox (~10-20s) will be slow while the Whisper
+model downloads and loads into memory; it's cached in RAM after that for the
+rest of the session, and on disk (`~/.cache/huggingface`) for future runs.
+The backend also warms up the (unused-by-UI) MMS-TTS model on startup for
+the same reason, in case you call `/api/speak` directly.
 
 ## Config (env vars, optional)
 

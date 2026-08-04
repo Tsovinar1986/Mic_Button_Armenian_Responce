@@ -83,6 +83,21 @@ def list_models():
         raise HTTPException(502, f"Could not reach Ollama at {OLLAMA_URL}: {e}")
 
 
+def armenian_ratio(text: str) -> float:
+    """Fraction of alphabetic characters that are actually Armenian script.
+    Used to detect the garbled/mixed-script output the local models
+    sometimes produce (stray Latin/Cyrillic/CJK/Greek characters)."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return 0.0
+    armenian = sum(1 for c in letters if "԰" <= c <= "֏")
+    return armenian / len(letters)
+
+
+ARMENIAN_RATIO_THRESHOLD = 0.85
+MAX_CHAT_ATTEMPTS = 3
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     model = req.model or DEFAULT_MODEL
@@ -95,17 +110,36 @@ def chat(req: ChatRequest):
         messages.append({"role": m.role, "content": m.content})
     messages.append({"role": "user", "content": text})
 
-    try:
-        r = requests.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={"model": model, "messages": messages, "stream": False},
-            timeout=300,
-        )
-        r.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(502, f"Ollama request failed (is 'ollama serve' running, and is '{model}' pulled?): {e}")
+    best_reply = ""
+    best_ratio = -1.0
+    for attempt in range(MAX_CHAT_ATTEMPTS):
+        try:
+            r = requests.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={"model": model, "messages": messages, "stream": False},
+                timeout=300,
+            )
+            r.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                502, f"Ollama request failed (is 'ollama serve' running, and is '{model}' pulled?): {e}"
+            )
 
-    reply = r.json().get("message", {}).get("content", "").strip()
+        candidate = r.json().get("message", {}).get("content", "").strip()
+        ratio = armenian_ratio(candidate)
+        if ratio > best_ratio:
+            best_reply, best_ratio = candidate, ratio
+        if ratio >= ARMENIAN_RATIO_THRESHOLD:
+            break
+        log.warning(
+            "Chat reply %d/%d looked garbled (armenian_ratio=%.2f), retrying: %r",
+            attempt + 1,
+            MAX_CHAT_ATTEMPTS,
+            ratio,
+            candidate[:80],
+        )
+
+    reply = best_reply
     if not reply:
         raise HTTPException(502, "Model returned an empty response")
     return {"reply": reply, "model": model}

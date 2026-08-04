@@ -169,21 +169,6 @@ body {
   letter-spacing: 0.3px;
 }
 
-.msg.assistant .speaker-btn {
-  margin-top: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--surface-strong);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 0.72rem;
-  cursor: pointer;
-}
-.msg.assistant .speaker-btn:hover { color: var(--text); }
-.msg.assistant .speaker-btn.speaking { color: var(--accent-3); border-color: var(--accent-3); }
 
 .typing-dots {
   display: inline-flex;
