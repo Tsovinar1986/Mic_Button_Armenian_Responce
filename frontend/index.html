@@ -14,9 +14,14 @@
     <header class="topbar">
       <div class="brand">
         <span class="brand-dot"></span>
-        <h1>Հայկական Ձայնային Օգնական</h1>
+        <h1>Ձայնային Օգնական</h1>
       </div>
       <div class="topbar-right">
+        <div id="langSwitcher" class="lang-switcher" role="group" aria-label="Reply language">
+          <button type="button" class="lang-btn active" data-lang="hy">ՀԱՅ</button>
+          <button type="button" class="lang-btn" data-lang="ru">РУС</button>
+          <button type="button" class="lang-btn" data-lang="en">ENG</button>
+        </div>
         <span id="statusPill" class="status-pill status-unknown">connecting…</span>
       </div>
     </header>
@@ -43,7 +48,7 @@
           id="textInput"
           class="text-input"
           type="text"
-          placeholder="Գրեք հայերեն կամ սեղմեք մայկը՝ խոսելու համար…"
+          placeholder="Գրեք հայերեն, ռուսերեն կամ անգլերեն, կամ սեղմեք մայկը՝ խոսելու համար…"
           autocomplete="off"
         />
 

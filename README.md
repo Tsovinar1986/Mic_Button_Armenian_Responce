@@ -1,7 +1,8 @@
 # Armenian Voice Assistant — Mic Button
 
-A mic-button voice assistant: speak or type in Armenian, get a **text-only**
-reply back in Armenian. Voice *output* is intentionally not wired up in this
+A mic-button voice assistant: speak or type in Armenian, Russian, or
+English, and get a **text-only** reply back in whichever of those three
+languages you used. Voice *output* is intentionally not wired up in this
 app anymore — see "Audio output" below.
 
 - **Frontend**: `frontend/` — plain HTML/CSS/JS served via a **Vite** dev
@@ -66,18 +67,31 @@ integration — it's just not wired into the UI anymore.
 
 ## Why these choices
 
-- **LLM**: routed through Ollama, fixed to `OLLAMA_MODEL` (env var, default
-  `qwen2.5:7b`) — no model picker in the UI. Change it with `ollama pull` +
-  restarting the backend with a different `OLLAMA_MODEL`. See "Known
-  limitation" below for why none of the current options are great — `7b` is
-  just the least-bad one tested so far, not a solved problem.
+- **LLM**: routed through Ollama, picked automatically per detected input
+  language (see "Language support" above) — no model picker in the UI.
+  Armenian uses `OLLAMA_MODEL` (default `qwen2.5:7b`), Russian/English use
+  `OLLAMA_MODEL_RU`/`OLLAMA_MODEL_EN` (default `qwen2.5:3b` each). Change
+  any of them with `ollama pull` + restarting the backend. See "Known
+  limitation" below for why none of the current options are great for
+  Armenian — `7b` is just the least-bad one tested so far, not a solved
+  problem.
 - **STT (mic → text)**: browser Web Speech API first choice — zero backend
   cost, streams audio to Google's servers for recognition (needs internet,
   behaves the same on Mac and Windows). Real Chromium browsers (Chrome, Edge)
-  use it; everything else falls back to `MediaRecorder` + a local **Whisper**
-  model (`faster-whisper`, `small` size, CPU, Armenian language hint) on the
-  backend — slower (few seconds of processing after you stop talking) and
-  fully offline once the model is downloaded once.
+  use it, with `recognition.lang` set from the language-switcher buttons in
+  the topbar (ՀԱՅ/РУС/ENG) so the engine knows which language to expect —
+  Web Speech API can't auto-detect the spoken language, it has to be told in
+  advance, so pick the matching button before you talk. Everything else
+  (Safari, Firefox) falls back to `MediaRecorder` + a local **Whisper** model
+  (`faster-whisper`, `small` size, CPU) on the backend — slower (few seconds
+  of processing after you stop talking) and fully offline once the model is
+  downloaded once, but genuinely auto-detects Armenian vs. Russian vs.
+  English from the audio itself, unlike the native path. (`/api/transcribe`
+  used to force `language="hy"` on every recording regardless of what was
+  actually spoken — a real bug, since it silently mangled Russian/English
+  speech into garbled Armenian-ish text before it ever reached the chat
+  endpoint; fixed by dropping that pin and letting Whisper detect the
+  language itself.)
 
   **Gotcha that broke this once**: feature-detecting `webkitSpeechRecognition`
   isn't enough to decide which path to use — **Safari defines that API in the
@@ -113,34 +127,65 @@ integration — it's just not wired into the UI anymore.
   robotics vision-language-action model (controls robot arms from camera
   frames), not a text/voice chat model, so it doesn't fit this use case.
 
+## Language support: Armenian, Russian, English
+
+`/api/chat` replies in whichever of the three languages the user's message
+was written in, instead of forcing every reply into Armenian. The system
+prompt tells the model to mirror the user's language (Armenian → Armenian,
+Russian → Russian, English → English, defaulting to Armenian if it can't
+tell), and the backend independently guesses the input language itself
+(`detect_language`, a character-script heuristic: Armenian block
+U+0530–U+058F, Cyrillic U+0400–U+04FF, or ASCII for English) so it knows
+which script the *reply* should come back in.
+
+**Model is routed by detected input language, not fixed.** Tested live:
+`qwen2.5:7b` (`DEFAULT_MODEL`/`OLLAMA_MODEL`, the best of the bunch for
+Armenian) simply ignores the "reply in the input language" instruction for
+Russian and English input and answers in broken Armenian regardless —
+a prompt tweak alone couldn't fix this, since the model won't follow the
+instruction. `qwen2.5:3b` tested reliably coherent for both Russian and
+English in a live side-by-side (though it's the weaker option for Armenian,
+per "Known limitation" below — an inconsistent mix of decent and
+mixed-script-garbled replies across runs). So `/api/chat` now maps detected
+language → model (`LANGUAGE_MODELS` in `backend/app.py`): Armenian uses
+`OLLAMA_MODEL`, Russian and English each default to `qwen2.5:3b`,
+overridable via `OLLAMA_MODEL_RU` / `OLLAMA_MODEL_EN`. An explicit `model`
+in the request body (scripting/testing only — the UI never sends one) still
+overrides the automatic routing.
+
+**Automatic correction, generalized across all three languages**:
+`/api/chat` checks what fraction of the reply's letters are actually in the
+script expected for the detected input language (`script_ratio`) and, if
+that ratio is below 85%, silently retries the same request (up to 3
+attempts total), keeping whichever attempt scored highest. This is the same
+garbled-output guard as before (stray Latin/Cyrillic/CJK/Greek/Armenian
+characters mixed into a reply that should be a single script), just no
+longer hardcoded to only accept Armenian — a Russian or English reply won't
+be endlessly retried for "not being Armenian" anymore. It's a real fix for
+that specific problem, not a prompt tweak, though it can't turn an
+incoherent reply into a correct one, only a script-clean one into the
+response you get. It also means a chat call can now take up to 3x longer in
+the worst case (each retry is a full model call).
+
 ## Known limitation: local Armenian LLM quality
 
-The system prompt now just asks for plain "Armenian" (no dialect specifier),
-which in practice reads as Eastern Armenian — deliberately, since these
-models were more precise and coherent that way. Earlier the prompt forced
-**Western Armenian** specifically (to match the MMS TTS voice, back when
-that was wired into the UI), but forcing that dialect made an
-already-weak model's output *less* reliable — small models seem to have
-much less Western Armenian in their training data, so asking for it added a
-second hard constraint on top of "be coherent Armenian at all" and
-precision suffered. Net effect: **text output here is Eastern-flavored
-Armenian.** If/when your own Piper voice is Western Armenian, that's a
-known dialect mismatch between this app's text and your audio — worth
-keeping in mind, and something only a genuinely reliable Western-Armenian-
-capable LLM would fix. Making the prompt more elaborate in general
-(explicitly naming "classical Mesropian orthography" etc.) made output
-*worse* too — small models seem to do best with short, plain instructions.
-
-**Automatic correction added**: `/api/chat` now checks what fraction of the
-reply's letters are actually Armenian-script characters (Unicode block
-U+0530–U+058F) and, if that ratio is below 85%, silently retries the same
-request (up to 3 attempts total), keeping whichever attempt scored highest.
-This directly targets the garbled-output failure mode below (stray
-Latin/Cyrillic/CJK/Greek characters mixed into otherwise-Armenian text) —
-it's a real fix for that specific problem, not a prompt tweak, though it
-can't turn an incoherent reply into a correct one, only a script-clean one
-into the response you get. It also means a chat call can now take up to 3x
-longer in the worst case (each retry is a full model call).
+The system prompt asks for plain "Armenian" (no dialect specifier) when
+replying in Armenian, which in practice reads as Eastern Armenian —
+deliberately, since these models were more precise and coherent that way.
+Earlier the prompt forced **Western Armenian** specifically (to match the
+MMS TTS voice, back when that was wired into the UI), but forcing that
+dialect made an already-weak model's output *less* reliable — small models
+seem to have much less Western Armenian in their training data, so asking
+for it added a second hard constraint on top of "be coherent Armenian at
+all" and precision suffered. Net effect: **Armenian text output here is
+Eastern-flavored Armenian.** If/when your own Piper voice is Western
+Armenian, that's a known dialect mismatch between this app's text and your
+audio — worth keeping in mind, and something only a genuinely reliable
+Western-Armenian-capable LLM would fix. Making the prompt more elaborate in
+general (explicitly naming "classical Mesropian orthography" etc.) made
+output *worse* too — small models seem to do best with short, plain
+instructions. This limitation is specific to the Armenian branch; the
+Russian and English replies aren't affected by it.
 
 Tested against the models already pulled in your Ollama:
 
@@ -218,7 +263,10 @@ the same reason, in case you call `/api/speak` directly.
 ## Config (env vars, optional)
 
 - `OLLAMA_URL` — default `http://localhost:11434`
-- `OLLAMA_MODEL` — default `qwen2.5:7b` (used when the UI doesn't pass a model)
+- `OLLAMA_MODEL` — default `qwen2.5:7b`, used for Armenian-detected input
+  (and whenever the caller doesn't pass an explicit `model`)
+- `OLLAMA_MODEL_RU` — default `qwen2.5:3b`, used for Russian-detected input
+- `OLLAMA_MODEL_EN` — default `qwen2.5:3b`, used for English-detected input
 - `TTS_MODEL_ID` — default `facebook/mms-tts-hyw`
 - `WHISPER_MODEL_SIZE` — default `small` (Safari/Firefox STT fallback; larger
   = more accurate but slower on CPU). Western Armenian is low-resource for

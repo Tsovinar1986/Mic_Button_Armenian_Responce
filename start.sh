@@ -9,7 +9,7 @@ if ! curl -s -o /dev/null http://localhost:11434/api/tags; then
   sleep 2
 fi
 
-./venv/bin/python3 -m uvicorn backend.app:app --host 0.0.0.0 --port 8191 --reload &
+./venv/bin/python3 -m uvicorn backend.app:app --host 127.0.0.1 --port 8191 --reload &
 BACKEND_PID=$!
 trap "kill $BACKEND_PID 2>/dev/null" EXIT
 

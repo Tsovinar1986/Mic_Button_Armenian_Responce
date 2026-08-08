@@ -7,9 +7,50 @@
   const listeningBanner = document.getElementById("listeningBanner");
   const interimText = document.getElementById("interimText");
   const supportNote = document.getElementById("supportNote");
+  const langSwitcher = document.getElementById("langSwitcher");
 
   const history = []; // {role, content}
   let busy = false;
+
+  // ---------------- Language switcher ----------------
+  // Backend already auto-detects the reply language from whatever the user
+  // types/says (see README "Language support"), so this only controls the
+  // AI's first written greeting, the input placeholder, and (as a bonus)
+  // which language the mic listens for.
+  const GREETINGS = {
+    hy: "Բարև ձեզ։ Ես ձեր ձայնային օգնականն եմ և կարող եմ պատասխանել հայերեն, ռուսերեն կամ անգլերեն։ Կարող եք գրել կամ սեղմել մայկը՝ ինձ հետ խոսելու համար։",
+    ru: "Привет! Я ваш голосовой помощник и могу отвечать на армянском, русском или английском. Напишите сообщение или нажмите на микрофон, чтобы поговорить со мной.",
+    en: "Hi there! I'm your voice assistant and can reply in Armenian, Russian, or English. Type a message or press the mic to talk to me.",
+  };
+  const PLACEHOLDERS = {
+    hy: "Գրեք հայերեն, ռուսերեն կամ անգլերեն, կամ սեղմեք մայկը՝ խոսելու համար…",
+    ru: "Напишите на армянском, русском или английском, или нажмите на микрофон…",
+    en: "Type in Armenian, Russian, or English, or press the mic to talk…",
+  };
+  const MIC_LANG_CODES = { hy: "hy-AM", ru: "ru-RU", en: "en-US" };
+
+  let currentLang = "hy";
+
+  function setLanguage(lang) {
+    if (!GREETINGS[lang]) return;
+    currentLang = lang;
+
+    langSwitcher.querySelectorAll(".lang-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.lang === lang);
+    });
+
+    history.length = 0;
+    chatEl.innerHTML = "";
+    addMessage("assistant", GREETINGS[lang]);
+
+    textInput.placeholder = PLACEHOLDERS[lang];
+    if (recognition) recognition.lang = MIC_LANG_CODES[lang];
+  }
+
+  langSwitcher.addEventListener("click", (e) => {
+    const btn = e.target.closest(".lang-btn");
+    if (btn) setLanguage(btn.dataset.lang);
+  });
 
   // ---------------- Chat rendering ----------------
   function addMessage(role, content) {
@@ -131,7 +172,7 @@
   if (recognitionSupported) {
     // Preferred path: native browser speech recognition (Chrome, Edge).
     recognition = new SpeechRecognitionImpl();
-    recognition.lang = "hy-AM";
+    recognition.lang = MIC_LANG_CODES[currentLang];
     recognition.continuous = false;
     recognition.interimResults = true;
 
@@ -258,13 +299,10 @@
   if (!micAvailable) {
     micBtn.disabled = true;
     supportNote.textContent =
-      "Voice input isn't supported in this browser — try Chrome, Edge, or Safari. You can still type in Armenian below.";
+      "Voice input isn't supported in this browser — try Chrome, Edge, or Safari. You can still type in Armenian, Russian, or English below.";
   }
 
   // ---------------- Init ----------------
-  addMessage(
-    "assistant",
-    "Բարև ձեզ։ Ես ձեր հայալեզու ձայնային օգնականն եմ։ Կարող եք գրել կամ սեղմել մայկը՝ ինձ հետ խոսելու համար։"
-  );
+  setLanguage(currentLang);
   loadHealth();
 })();

@@ -21,12 +21,25 @@ DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 TTS_MODEL_ID = os.environ.get("TTS_MODEL_ID", "facebook/mms-tts-hyw")  # Meta MMS only ships Western Armenian TTS
 WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")  # STT fallback for browsers without Web Speech API
 
+# qwen2.5:7b (DEFAULT_MODEL) is the least-bad option for Armenian but, tested
+# live, ignores the "reply in the input language" instruction for Russian/
+# English input and just answers in broken Armenian anyway. qwen2.5:3b tested
+# reliably coherent for both Russian and English (worse for Armenian, which
+# is why it isn't DEFAULT_MODEL) - so route by detected input language
+# instead of trusting one fixed model to do all three.
+LANGUAGE_MODELS = {
+    "hy": DEFAULT_MODEL,
+    "ru": os.environ.get("OLLAMA_MODEL_RU", "qwen2.5:3b"),
+    "en": os.environ.get("OLLAMA_MODEL_EN", "qwen2.5:3b"),
+}
+
 SYSTEM_PROMPT = (
-    "You are a warm, helpful voice assistant. Always answer in Armenian "
-    "(հայերեն), Armenian script, even if the user writes in English, "
-    "Russian, or transliterated Armenian, unless they explicitly ask for "
-    "another language. Keep answers short and natural, since they will "
-    "also be read aloud."
+    "You are a warm, helpful voice assistant. Always answer in the same "
+    "language the user just wrote in: Armenian (հայերեն, Armenian script) "
+    "for Armenian input, Russian (русский, Cyrillic script) for Russian "
+    "input, or English for English input. If you can't tell, default to "
+    "Armenian. Don't mix languages or scripts within a reply, and don't "
+    "switch language unless the user does. Keep answers short and natural."
 )
 
 @asynccontextmanager
@@ -40,7 +53,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Armenian Voice Assistant", lifespan=lifespan)
+app = FastAPI(title="Voice Assistant", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -95,27 +108,58 @@ def list_models():
         raise HTTPException(502, f"Could not reach Ollama at {OLLAMA_URL}: {e}")
 
 
-def armenian_ratio(text: str) -> float:
-    """Fraction of alphabetic characters that are actually Armenian script.
-    Used to detect the garbled/mixed-script output the local models
-    sometimes produce (stray Latin/Cyrillic/CJK/Greek characters)."""
+def detect_language(text: str) -> str:
+    """Guess which of the three supported languages a message is written
+    in, from character script alone. Used to pick which script the reply
+    is expected to be in (see script_ratio)."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return "hy"
+    armenian = sum(1 for c in letters if "԰" <= c <= "֏")
+    cyrillic = sum(1 for c in letters if "Ѐ" <= c <= "ӿ")
+    latin = sum(1 for c in letters if c.isascii())
+    counts = {"hy": armenian, "ru": cyrillic, "en": latin}
+    return max(counts, key=counts.get)
+
+
+SCRIPT_RANGES = {
+    "hy": ("԰", "֏"),
+    "ru": ("Ѐ", "ӿ"),
+    "en": None,  # checked via str.isascii() instead of a unicode range
+}
+
+
+def script_ratio(text: str, lang: str) -> float:
+    """Fraction of alphabetic characters that are actually in the script
+    expected for `lang`. Used to detect the garbled/mixed-script output the
+    local models sometimes produce (stray Latin/Cyrillic/CJK/Greek/Armenian
+    characters mixed into a reply that should be a single script)."""
     letters = [c for c in text if c.isalpha()]
     if not letters:
         return 0.0
-    armenian = sum(1 for c in letters if "԰" <= c <= "֏")
-    return armenian / len(letters)
+    if lang == "en":
+        matching = sum(1 for c in letters if c.isascii())
+    else:
+        lo, hi = SCRIPT_RANGES[lang]
+        matching = sum(1 for c in letters if lo <= c <= hi)
+    return matching / len(letters)
 
 
-ARMENIAN_RATIO_THRESHOLD = 0.85
+SCRIPT_RATIO_THRESHOLD = 0.85
 MAX_CHAT_ATTEMPTS = 3
 
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    model = req.model or DEFAULT_MODEL
     text = req.message.strip()
     if not text:
         raise HTTPException(400, "message is required")
+
+    lang = detect_language(text)
+    # The UI never sends `model` (see README), so in practice this always
+    # routes by detected language; an explicit `model` (scripting/testing)
+    # still overrides it.
+    model = req.model or LANGUAGE_MODELS[lang]
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in req.history[-12:]:
@@ -138,15 +182,16 @@ def chat(req: ChatRequest):
             )
 
         candidate = r.json().get("message", {}).get("content", "").strip()
-        ratio = armenian_ratio(candidate)
+        ratio = script_ratio(candidate, lang)
         if ratio > best_ratio:
             best_reply, best_ratio = candidate, ratio
-        if ratio >= ARMENIAN_RATIO_THRESHOLD:
+        if ratio >= SCRIPT_RATIO_THRESHOLD:
             break
         log.warning(
-            "Chat reply %d/%d looked garbled (armenian_ratio=%.2f), retrying: %r",
+            "Chat reply %d/%d looked garbled for detected language %r (script_ratio=%.2f), retrying: %r",
             attempt + 1,
             MAX_CHAT_ATTEMPTS,
+            lang,
             ratio,
             candidate[:80],
         )
@@ -212,8 +257,16 @@ async def transcribe(audio: UploadFile = File(...)):
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as tmp:
             tmp.write(data)
             tmp.flush()
-            segments, _info = model.transcribe(tmp.name, language="hy", vad_filter=True)
+            # No `language=` pin: Whisper auto-detects Armenian/Russian/
+            # English (or anything else) from the audio itself. Forcing
+            # language="hy" here used to make it force-decode every
+            # recording as Armenian regardless of what was actually
+            # spoken - Russian speech came out as garbled Armenian-ish
+            # text, which then correctly-but-wrongly got an Armenian reply
+            # since the (already corrupted) transcript looked Armenian.
+            segments, info = model.transcribe(tmp.name, vad_filter=True)
             text = " ".join(seg.text.strip() for seg in segments).strip()
+            log.info("Transcribed audio as language=%s (p=%.2f): %r", info.language, info.language_probability, text[:80])
         return {"text": text}
     except Exception as e:
         log.exception("Transcription failed")
@@ -256,4 +309,4 @@ if __name__ == "__main__":
     # `uvicorn backend.app:app --reload`, or ../start.sh, for that).
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8191)))
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", 8191)))

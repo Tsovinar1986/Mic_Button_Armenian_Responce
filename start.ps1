@@ -17,7 +17,7 @@ if (-not $ollamaUp) {
 
 $venvPython = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
 $backend = Start-Process -FilePath $venvPython `
-    -ArgumentList "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8191", "--reload" `
+    -ArgumentList "-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8191", "--reload" `
     -PassThru -NoNewWindow
 
 try {
