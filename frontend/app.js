@@ -8,6 +8,8 @@
   const interimText = document.getElementById("interimText");
   const supportNote = document.getElementById("supportNote");
   const langSwitcher = document.getElementById("langSwitcher");
+  const outputModeBtn = document.getElementById("outputModeBtn");
+  const brandTitle = document.getElementById("brandTitle");
 
   const history = []; // {role, content}
   let busy = false;
@@ -28,12 +30,14 @@
     en: "Type in Armenian, Russian, or English, or press the mic to talk…",
   };
   const MIC_LANG_CODES = { hy: "hy-AM", ru: "ru-RU", en: "en-US" };
+  const BRAND_NAMES = { hy: "Ձայնային Օգնական", ru: "Голосовой помощник", en: "Voice Assistant" };
 
   let currentLang = "hy";
 
   function setLanguage(lang) {
     if (!GREETINGS[lang]) return;
     currentLang = lang;
+    stopSpeaking();
 
     langSwitcher.querySelectorAll(".lang-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.lang === lang);
@@ -45,6 +49,9 @@
 
     textInput.placeholder = PLACEHOLDERS[lang];
     if (recognition) recognition.lang = MIC_LANG_CODES[lang];
+
+    brandTitle.textContent = BRAND_NAMES[lang];
+    document.title = `${BRAND_NAMES[lang]} · Voice Assistant`;
   }
 
   langSwitcher.addEventListener("click", (e) => {
@@ -52,17 +59,171 @@
     if (btn) setLanguage(btn.dataset.lang);
   });
 
+  // ---------------- Voice / text reply toggle ----------------
+  // Text-only was the deliberate default (see README "Audio output"), but
+  // this lets you opt into hearing replies instead of just reading them.
+  // Armenian speech comes from this app's own backend (POST /api/speak,
+  // Meta MMS-TTS) since that's already wired up and warmed up on startup.
+  // Russian/English use the browser's built-in speechSynthesis instead of
+  // a backend model - there's no Piper (or other) voice wired in for those
+  // two languages yet, so this is a pragmatic stopgap, not the final plan.
+  let outputMode = "text"; // "text" | "voice"
+  let currentAudio = null;
+
+  function stopSpeaking() {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+
+  function setOutputMode(mode) {
+    outputMode = mode;
+    const voice = mode === "voice";
+    outputModeBtn.dataset.mode = mode;
+    outputModeBtn.setAttribute("aria-pressed", String(voice));
+    outputModeBtn.textContent = voice ? "🔊 Voice" : "💬 Text";
+    outputModeBtn.title = voice ? "Replying with voice — click for text" : "Replying as text — click for voice";
+    if (!voice) stopSpeaking();
+  }
+
+  outputModeBtn.addEventListener("click", () => {
+    setOutputMode(outputMode === "voice" ? "text" : "voice");
+  });
+
+  async function speakReply(text, lang) {
+    stopSpeaking();
+    if (lang === "hy") {
+      try {
+        const res = await fetch("/api/speak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error(res.statusText);
+        const blob = await res.blob();
+        currentAudio = new Audio(URL.createObjectURL(blob));
+        currentAudio.play();
+      } catch (e) {
+        addMessage("system", `Voice synthesis error: ${e.message}`);
+      }
+      return;
+    }
+    if (!window.speechSynthesis) {
+      addMessage("system", "Voice replies aren't supported in this browser.");
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = MIC_LANG_CODES[lang];
+    window.speechSynthesis.speak(utterance);
+  }
+
   // ---------------- Chat rendering ----------------
-  function addMessage(role, content) {
+  function addMessage(role, content, historyIndex) {
     const div = document.createElement("div");
     div.className = `msg ${role}`;
     const textNode = document.createElement("span");
+    textNode.className = "msg-text";
     textNode.textContent = content;
     div.appendChild(textNode);
+
+    // Edit-and-resend, like ChatGPT/Gemini: fix a typo or a misheard mic
+    // transcription without retyping the whole message, then regenerate
+    // the reply from that point - everything after it (including the old
+    // reply) is discarded since it was based on the wrong message.
+    if (role === "user" && historyIndex !== undefined) {
+      div.dataset.historyIndex = String(historyIndex);
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "edit-btn";
+      editBtn.setAttribute("aria-label", "Edit message");
+      editBtn.title = "Edit and resend";
+      editBtn.textContent = "✏️";
+      editBtn.addEventListener("click", () => enterEditMode(div, historyIndex, content));
+      div.appendChild(editBtn);
+    }
 
     chatEl.appendChild(div);
     chatEl.scrollTop = chatEl.scrollHeight;
     return div;
+  }
+
+  function enterEditMode(div, historyIndex, originalText) {
+    if (busy) return;
+    div.innerHTML = "";
+    div.classList.add("editing");
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "edit-textarea";
+    textarea.value = originalText;
+
+    const actions = document.createElement("div");
+    actions.className = "edit-actions";
+    const resendBtn = document.createElement("button");
+    resendBtn.type = "button";
+    resendBtn.textContent = "Resend";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Cancel";
+    actions.append(resendBtn, cancelBtn);
+
+    div.append(textarea, actions);
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+    const cancel = () => {
+      div.classList.remove("editing");
+      div.innerHTML = "";
+      const textNode = document.createElement("span");
+      textNode.className = "msg-text";
+      textNode.textContent = originalText;
+      div.appendChild(textNode);
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "edit-btn";
+      editBtn.setAttribute("aria-label", "Edit message");
+      editBtn.title = "Edit and resend";
+      editBtn.textContent = "✏️";
+      editBtn.addEventListener("click", () => enterEditMode(div, historyIndex, originalText));
+      div.appendChild(editBtn);
+    };
+
+    const resend = () => {
+      const newText = textarea.value.trim();
+      if (!newText) return;
+      resendFrom(historyIndex, newText);
+    };
+
+    resendBtn.addEventListener("click", resend);
+    cancelBtn.addEventListener("click", cancel);
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        resend();
+      } else if (e.key === "Escape") {
+        cancel();
+      }
+    });
+  }
+
+  function resendFrom(historyIndex, newText) {
+    stopSpeaking();
+    // Drop this message and everything after it - the old reply (and any
+    // later turns) were responses to the un-edited text, so they no longer
+    // apply once it's changed.
+    history.length = historyIndex;
+    const nodes = Array.from(chatEl.children);
+    const cutoffNode = nodes.find((n) => n.dataset.historyIndex === String(historyIndex));
+    if (cutoffNode) {
+      let node = cutoffNode;
+      while (node) {
+        const next = node.nextSibling;
+        node.remove();
+        node = next;
+      }
+    }
+    sendMessage(newText);
   }
 
   function addTypingIndicator() {
@@ -106,7 +267,7 @@
     micBtn.disabled = true;
     textInput.value = "";
 
-    addMessage("user", text);
+    addMessage("user", text, history.length);
     history.push({ role: "user", content: text });
     addTypingIndicator();
 
@@ -130,6 +291,13 @@
       const data = await res.json();
       history.push({ role: "assistant", content: data.reply });
       addMessage("assistant", data.reply);
+      // reply_lang is what script the reply actually came back in - not
+      // always the same as currentLang, since the model can occasionally
+      // answer in the wrong language despite the backend's retries (e.g.
+      // an English question about Armenia drifting into an Armenian
+      // answer). Speaking with the wrong voice would be worse than not
+      // matching the UI's selected language, so trust the reply itself.
+      if (outputMode === "voice") speakReply(data.reply, data.reply_lang || currentLang);
     } catch (e) {
       removeTypingIndicator();
       addMessage("system", `Network error: ${e.message}`);
@@ -255,6 +423,11 @@
         const form = new FormData();
         const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
         form.append("audio", blob, `speech.${ext}`);
+        // Tell Whisper which language to expect (matches the active ՀԱՅ/РУС/ENG
+        // button) instead of leaving it to auto-detect - Armenian is
+        // low-resource enough for Whisper that auto-detect alone can
+        // misidentify short/ambiguous speech and garble the transcription.
+        form.append("language", currentLang);
 
         try {
           const res = await fetch("/api/transcribe", { method: "POST", body: form });

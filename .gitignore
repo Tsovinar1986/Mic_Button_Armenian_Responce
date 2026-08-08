@@ -7,3 +7,4 @@ dist/
 .DS_Store
 *.wav
 .env
+backend/whisper_armenian_ct2/

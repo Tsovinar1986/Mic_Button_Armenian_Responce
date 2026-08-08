@@ -142,6 +142,30 @@ body {
   color: #ffffff;
 }
 
+.mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--surface-strong);
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.mode-btn:hover { color: var(--text); }
+
+.mode-btn[data-mode="voice"] {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #ffffff;
+  border-color: transparent;
+}
+
 /* ---------- Chat shell ---------- */
 .chat-shell {
   flex: 1;
@@ -181,11 +205,84 @@ body {
 }
 
 .msg.user {
+  position: relative;
   align-self: flex-end;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #ffffff;
   border-bottom-right-radius: 6px;
   box-shadow: 0 8px 24px -8px rgba(124, 108, 255, 0.5);
+}
+
+.msg-text { display: block; }
+
+.edit-btn {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.msg.user:hover .edit-btn { opacity: 1; }
+.edit-btn:hover { transform: scale(1.1); }
+
+.msg.user.editing {
+  max-width: 92%;
+  cursor: default;
+}
+
+.edit-textarea {
+  display: block;
+  width: 100%;
+  min-height: 4.5em;
+  resize: vertical;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.edit-textarea::placeholder { color: rgba(255, 255, 255, 0.7); }
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.edit-actions button {
+  border: none;
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.edit-actions button:first-child {
+  background: #ffffff;
+  color: var(--accent);
+}
+
+.edit-actions button:last-child {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
 }
 
 .msg.assistant {

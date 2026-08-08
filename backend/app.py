@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 
 import requests
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +19,14 @@ log = logging.getLogger("voice-assistant")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 TTS_MODEL_ID = os.environ.get("TTS_MODEL_ID", "facebook/mms-tts-hyw")  # Meta MMS only ships Western Armenian TTS
-WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small")  # STT fallback for browsers without Web Speech API
+WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "medium")  # STT fallback for browsers without Web Speech API
+# "small" tested live and hallucinated short Armenian phrases into
+# nonsense words entirely (e.g. spoken "խաչապուրի" came back as
+# "խաչապատ...ուտուստել", not real Armenian) even with the correct
+# language pinned - Armenian is too low-resource for "small" to be
+# reliable. "medium" is slower and heavier but much more accurate;
+# set WHISPER_MODEL_SIZE=small back if you need the speed and don't
+# care about Armenian accuracy.
 
 # qwen2.5:7b (DEFAULT_MODEL) is the least-bad option for Armenian but, tested
 # live, ignores the "reply in the input language" instruction for Russian/
@@ -32,6 +39,7 @@ LANGUAGE_MODELS = {
     "ru": os.environ.get("OLLAMA_MODEL_RU", "qwen2.5:3b"),
     "en": os.environ.get("OLLAMA_MODEL_EN", "qwen2.5:3b"),
 }
+LANGUAGE_NAMES = {"hy": "Armenian", "ru": "Russian", "en": "English"}
 
 SYSTEM_PROMPT = (
     "You are a warm, helpful voice assistant. Always answer in the same "
@@ -50,6 +58,7 @@ async def lifespan(app: FastAPI):
     # both functions) have finished being defined.
     threading.Thread(target=_load_tts, daemon=True).start()
     threading.Thread(target=_load_stt, daemon=True).start()
+    threading.Thread(target=_load_stt, args=("hy",), daemon=True).start()
     yield
 
 
@@ -96,7 +105,8 @@ def health():
         "models": models,
         "default_model": DEFAULT_MODEL,
         "tts_loaded": _tts_model is not None,
-        "stt_loaded": _stt_model is not None,
+        "stt_loaded": "default" in _stt_models,
+        "stt_armenian_loaded": "hy" in _stt_models,
     }
 
 
@@ -145,6 +155,36 @@ def script_ratio(text: str, lang: str) -> float:
     return matching / len(letters)
 
 
+# Scripts that should never legitimately appear in an Armenian/Russian/
+# English reply at all - unlike SCRIPT_RANGES above (which the overall
+# reply is expected to match), even a couple of stray characters from one
+# of these blocks means the model code-switched mid-reply (observed live:
+# qwen2.5:7b tailing off into Chinese or Greek script). A handful of
+# contaminating characters in an otherwise-long, otherwise-correct reply
+# isn't enough to drag script_ratio's overall average below its threshold,
+# so that check alone missed this - this one checks for *any* presence,
+# not proportion.
+DISALLOWED_SCRIPT_RANGES = [
+    ("一", "鿿"),  # CJK Unified Ideographs
+    ("぀", "ヿ"),  # Hiragana/Katakana
+    ("가", "힣"),  # Hangul
+    ("Ͱ", "Ͽ"),  # Greek and Coptic
+]
+
+
+def has_stray_foreign_script(text: str, lang: str) -> bool:
+    if any(lo <= c <= hi for c in text for lo, hi in DISALLOWED_SCRIPT_RANGES):
+        return True
+    # Latin is the *expected* script for English replies, but a stray Latin
+    # word/fragment mixed into an Armenian or Russian reply (observed live:
+    # qwen2.5:7b producing tokens like "քենդalled") is exactly
+    # the same kind of contamination as a stray CJK/Greek character - so
+    # treat it the same way when the reply isn't supposed to be English.
+    if lang != "en":
+        return any(c.isascii() and c.isalpha() for c in text)
+    return False
+
+
 SCRIPT_RATIO_THRESHOLD = 0.85
 MAX_CHAT_ATTEMPTS = 3
 
@@ -168,6 +208,8 @@ def chat(req: ChatRequest):
 
     best_reply = ""
     best_ratio = -1.0
+    best_clean_reply = ""
+    best_clean_ratio = -1.0
     for attempt in range(MAX_CHAT_ATTEMPTS):
         try:
             r = requests.post(
@@ -183,23 +225,86 @@ def chat(req: ChatRequest):
 
         candidate = r.json().get("message", {}).get("content", "").strip()
         ratio = script_ratio(candidate, lang)
+        clean = not has_stray_foreign_script(candidate, lang)
         if ratio > best_ratio:
             best_reply, best_ratio = candidate, ratio
-        if ratio >= SCRIPT_RATIO_THRESHOLD:
+        if clean and ratio > best_clean_ratio:
+            best_clean_reply, best_clean_ratio = candidate, ratio
+        if clean and ratio >= SCRIPT_RATIO_THRESHOLD:
             break
         log.warning(
-            "Chat reply %d/%d looked garbled for detected language %r (script_ratio=%.2f), retrying: %r",
+            "Chat reply %d/%d looked garbled for detected language %r (script_ratio=%.2f, clean=%s), retrying: %r",
             attempt + 1,
             MAX_CHAT_ATTEMPTS,
             lang,
             ratio,
+            clean,
             candidate[:80],
         )
 
-    reply = best_reply
+    # Prefer a reply with no stray foreign-script contamination at all,
+    # even if its script_ratio is lower than the best contaminated one -
+    # a purely-correct-script reply beats a mostly-correct one with a
+    # code-switched tail. Only fall back to the contaminated best if every
+    # attempt had stray characters.
+    reply = best_clean_reply or best_reply
     if not reply:
         raise HTTPException(502, "Model returned an empty response")
-    return {"reply": reply, "model": model}
+
+    # None of the MAX_CHAT_ATTEMPTS tries produced an acceptable reply - seen
+    # live with an English "tell me about Yerevan's gardens" prompt, where
+    # qwen2.5:3b answered in Armenian on all 3 attempts (ratios 0.15, 0.00,
+    # 0.17) because the *topic* was Armenia-related, overriding the "reply
+    # in the input language" instruction entirely. Open-ended generation
+    # already failed 3 times, so instead of a 4th identical attempt, ask the
+    # model to do a much narrower, easier task: translate its own
+    # already-written answer into the right language, rather than write a
+    # fresh one.
+    if best_clean_ratio < SCRIPT_RATIO_THRESHOLD:
+        try:
+            r = requests.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Translate the following text into {LANGUAGE_NAMES[lang]}. "
+                                f"Respond with ONLY the raw translated text itself - no preamble, "
+                                f"no \"here is the translation\", no explanation of what you're "
+                                f"doing, just the translation:\n\n{reply}"
+                            ),
+                        }
+                    ],
+                    "stream": False,
+                },
+                timeout=300,
+            )
+            r.raise_for_status()
+            candidate = r.json().get("message", {}).get("content", "").strip()
+            ratio = script_ratio(candidate, lang)
+            clean = not has_stray_foreign_script(candidate, lang)
+            log.info(
+                "Chat reply needed a translation-correction pass for language %r (script_ratio=%.2f, clean=%s)",
+                lang,
+                ratio,
+                clean,
+            )
+            if candidate and clean and ratio > best_clean_ratio:
+                reply = candidate
+        except requests.exceptions.RequestException as e:
+            log.warning("Translation-correction pass failed, keeping original reply: %s", e)
+
+    # What script the *final* reply actually ended up in - not necessarily
+    # `lang` (the detected input language), since the model can still miss
+    # even after the correction pass above. The frontend uses this to pick
+    # which voice to speak the reply with in voice mode, so playback always
+    # matches what's actually on screen instead of assuming it matches the
+    # input language.
+    reply_lang = detect_language(reply)
+
+    return {"reply": reply, "model": model, "reply_lang": reply_lang}
 
 
 # ---- Armenian text-to-speech (Meta MMS-TTS), lazy-loaded on first use ----
@@ -227,44 +332,64 @@ def _load_tts():
 
 
 # ---- Speech-to-text (faster-whisper), for browsers without Web Speech API ----
-_stt_model = None
+# WHISPER_MODEL_SIZE (generic, multilingual) handles Russian/English fine.
+# For Armenian specifically, a dedicated fine-tuned model
+# (Chillarmo/whisper-large-v3-turbo-armenian, converted to CTranslate2 - see
+# README) is far more accurate than the generic model, which was never
+# trained on much Armenian and hallucinates short/ambiguous phrases into
+# nonsense words. So two models are loaded and picked per detected/selected
+# language rather than one model for everything.
+WHISPER_ARMENIAN_CT2_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "whisper_armenian_ct2")
+
+_stt_models = {}
 _stt_lock = threading.Lock()
 
 
-def _load_stt():
-    global _stt_model
-    if _stt_model is not None:
-        return _stt_model
+def _load_stt(lang: Optional[str] = None):
+    key = "hy" if lang == "hy" and os.path.isdir(WHISPER_ARMENIAN_CT2_DIR) else "default"
+    if key in _stt_models:
+        return _stt_models[key]
     with _stt_lock:
-        if _stt_model is None:
-            log.info("Loading Whisper STT model (%s) ...", WHISPER_MODEL_SIZE)
+        if key not in _stt_models:
             from faster_whisper import WhisperModel
 
-            _stt_model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
-            log.info("Whisper STT model ready.")
-    return _stt_model
+            if key == "hy":
+                log.info("Loading fine-tuned Armenian Whisper model (%s) ...", WHISPER_ARMENIAN_CT2_DIR)
+                _stt_models[key] = WhisperModel(WHISPER_ARMENIAN_CT2_DIR, device="cpu", compute_type="int8")
+            else:
+                log.info("Loading Whisper STT model (%s) ...", WHISPER_MODEL_SIZE)
+                _stt_models[key] = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+            log.info("Whisper STT model (%s) ready.", key)
+    return _stt_models[key]
+
+
+WHISPER_LANGUAGES = {"hy", "ru", "en"}
 
 
 @app.post("/api/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
+async def transcribe(audio: UploadFile = File(...), language: Optional[str] = Form(None)):
     data = await audio.read()
     if not data:
         raise HTTPException(400, "empty audio upload")
 
+    # `language` is the language-switcher button currently active in the UI
+    # (see frontend/app.js setLanguage) - Whisper's own language-ID step is
+    # unreliable for short/ambiguous Armenian audio (Armenian is low-
+    # resource for Whisper, unlike Russian/English), so a plain auto-detect
+    # would sometimes misidentify Armenian speech before transcription even
+    # starts and garble the result. Pinning to the UI's selected language
+    # fixes that for Armenian while still letting Russian/English work
+    # (both transcribe cleanly either pinned or auto-detected). Falls back
+    # to auto-detect only if the frontend didn't send a recognized language.
+    whisper_lang = language if language in WHISPER_LANGUAGES else None
+
     suffix = os.path.splitext(audio.filename or "")[1] or ".webm"
     try:
-        model = _load_stt()
+        model = _load_stt(whisper_lang)
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as tmp:
             tmp.write(data)
             tmp.flush()
-            # No `language=` pin: Whisper auto-detects Armenian/Russian/
-            # English (or anything else) from the audio itself. Forcing
-            # language="hy" here used to make it force-decode every
-            # recording as Armenian regardless of what was actually
-            # spoken - Russian speech came out as garbled Armenian-ish
-            # text, which then correctly-but-wrongly got an Armenian reply
-            # since the (already corrupted) transcript looked Armenian.
-            segments, info = model.transcribe(tmp.name, vad_filter=True)
+            segments, info = model.transcribe(tmp.name, language=whisper_lang, vad_filter=True)
             text = " ".join(seg.text.strip() for seg in segments).strip()
             log.info("Transcribed audio as language=%s (p=%.2f): %r", info.language, info.language_probability, text[:80])
         return {"text": text}

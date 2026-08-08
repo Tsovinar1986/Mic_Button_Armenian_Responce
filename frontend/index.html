@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="brand">
         <span class="brand-dot"></span>
-        <h1>Ձայնային Օգնական</h1>
+        <h1 id="brandTitle">Ձայնային Օգնական</h1>
       </div>
       <div class="topbar-right">
         <div id="langSwitcher" class="lang-switcher" role="group" aria-label="Reply language">
@@ -22,6 +22,15 @@
           <button type="button" class="lang-btn" data-lang="ru">РУС</button>
           <button type="button" class="lang-btn" data-lang="en">ENG</button>
         </div>
+        <button
+          type="button"
+          id="outputModeBtn"
+          class="mode-btn"
+          data-mode="text"
+          aria-pressed="false"
+          aria-label="Reply mode: text (click for voice)"
+          title="Replying as text — click for voice"
+        >💬 Text</button>
         <span id="statusPill" class="status-pill status-unknown">connecting…</span>
       </div>
     </header>

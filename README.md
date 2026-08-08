@@ -13,23 +13,58 @@ app anymore — see "Audio output" below.
   for transcription. A text box covers typed input too. Replies are
   text-only — no audio is played back in the browser.
 - **Backend**: `backend/app.py` — FastAPI on `:8191`. Talks to a local
-  **Ollama** server for the LLM reply and to a local **Whisper** model
+  **Ollama** server for the LLM reply and to local **Whisper** models
   (`faster-whisper`) for the Safari/Firefox speech-to-text fallback. It also
   serves `frontend/` as static files, so `:8191` alone works too if you
   don't want to run Vite.
 
+## How it works
+
+1. You speak (mic button) or type a message in the topbar's `ՀԱՅ`/`РУС`/`ENG`
+   language, or just type — the app doesn't require picking a language to
+   type in, only to disambiguate voice input (see step 2).
+2. **Speech → text**, only if you used the mic:
+   - Chrome/Edge: the browser's own Web Speech API transcribes it, told
+     which language to expect via the topbar buttons.
+   - Safari/Firefox: the recording is sent to `POST /api/transcribe`, which
+     runs it through a local Whisper model — the Armenian-fine-tuned one if
+     `ՀԱՅ` is selected, the generic multilingual one otherwise (see "Models
+     used" below).
+3. **Text → reply**: `POST /api/chat` looks at the message's script to guess
+   which of the three languages it's in (`detect_language`), routes it to
+   whichever Ollama model is best for that language (`LANGUAGE_MODELS`), and
+   checks the reply for script contamination (stray Chinese/Greek/Latin
+   characters the local models sometimes produce), retrying up to 3 times if
+   the first attempt looks garbled.
+4. The reply is added to the chat as plain text. Nothing is ever spoken back
+   — see "Audio output" below for why.
+
+## Models used
+
+| Model | Used for | Why this one |
+|---|---|---|
+| `qwen2.5:7b` (Ollama) | Chat replies when the message is Armenian | Best Armenian output of the models tested so far — still imperfect, see "Known limitation" below |
+| `qwen2.5:3b` (Ollama) | Chat replies when the message is Russian or English | Tested reliably coherent for both — `qwen2.5:7b` ignored the "reply in this language" instruction for Russian/English entirely |
+| `faster-whisper` generic (`WHISPER_MODEL_SIZE`, default `medium`) | Mic transcription (Safari/Firefox) when Russian or English is selected | Solid multilingual accuracy; Armenian specifically is where it falls down, hence the next row |
+| `Chillarmo/whisper-large-v3-turbo-armenian`, converted to CTranslate2 (`backend/whisper_armenian_ct2/`) | Mic transcription (Safari/Firefox) when `ՀԱՅ` is selected | Fine-tuned specifically on Armenian (15.3% WER) — the generic Whisper model hallucinated short Armenian phrases into nonsense words even with the correct language pinned |
+| `facebook/mms-tts-hyw` (Meta MMS) | `POST /api/speak` only — **not called by the UI** | Kept as a reference/manual-testing endpoint; see "Audio output" |
+
+All four language-model roles (2 chat + 2 STT) are picked automatically per
+detected/selected language — there's no model picker in the UI.
+
 ## Project structure
 
 ```
-MIC_Button_Trying_response_Armenian/
+MIC_Button_Trying_response/
 ├── backend/
-│   ├── app.py              # FastAPI app: /api/chat, /api/speak, /api/transcribe, /api/health, /api/models
+│   ├── app.py                    # FastAPI app: /api/chat, /api/speak, /api/transcribe, /api/health, /api/models
+│   ├── whisper_armenian_ct2/     # converted Armenian Whisper model (gitignored, built by you - see Setup)
 │   └── requirements.txt
 ├── frontend/
-│   ├── index.html
-│   ├── app.js               # chat UI, mic input (native + Whisper fallback), no audio playback
+│   ├── index.html                 # includes the ՀԱՅ/РУС/ENG language switcher
+│   ├── app.js                     # chat UI, mic input (native + Whisper fallback), no audio playback
 │   ├── style.css
-│   ├── vite.config.js        # dev server on :5178, proxies /api to :8191
+│   ├── vite.config.js             # dev server on :5178, proxies /api to :8191
 │   └── package.json
 ├── venv/                    # local Python virtualenv (gitignored)
 ├── start.sh                  # Mac/Linux launcher (backend :8191 + Vite :5178)
@@ -83,15 +118,37 @@ integration — it's just not wired into the UI anymore.
   Web Speech API can't auto-detect the spoken language, it has to be told in
   advance, so pick the matching button before you talk. Everything else
   (Safari, Firefox) falls back to `MediaRecorder` + a local **Whisper** model
-  (`faster-whisper`, `small` size, CPU) on the backend — slower (few seconds
-  of processing after you stop talking) and fully offline once the model is
-  downloaded once, but genuinely auto-detects Armenian vs. Russian vs.
-  English from the audio itself, unlike the native path. (`/api/transcribe`
-  used to force `language="hy"` on every recording regardless of what was
-  actually spoken — a real bug, since it silently mangled Russian/English
-  speech into garbled Armenian-ish text before it ever reached the chat
-  endpoint; fixed by dropping that pin and letting Whisper detect the
-  language itself.)
+  (`faster-whisper`, CPU) on the backend — slower (few seconds of processing
+  after you stop talking) and fully offline once the models are downloaded
+  once.
+
+  `/api/transcribe` used to force `language="hy"` on every recording
+  regardless of what was actually spoken — a real bug, since it silently
+  mangled Russian/English speech into garbled Armenian-ish text before it
+  ever reached the chat endpoint. Dropping that pin entirely and letting
+  Whisper auto-detect fixed Russian/English, but broke Armenian: Armenian is
+  low-resource enough for Whisper that its language-ID step can misidentify
+  short/ambiguous Armenian speech before transcription even starts (tested —
+  a 1s silent clip auto-detected as `en` at only 39% confidence, showing how
+  easily it misfires). So `/api/transcribe` now takes an optional `language`
+  form field, which `frontend/app.js` fills in from the same language-switcher
+  buttons (`hy`/`ru`/`en`) used for the native path above — pinning the
+  correct language when the frontend knows it, falling back to auto-detect
+  only if that field is missing or unrecognized.
+
+  Pinning the language fixed *which* language Whisper decoded as, but not
+  accuracy within Armenian — the generic model (`WHISPER_MODEL_SIZE`) still
+  hallucinated real Armenian input into nonsense words (tested live: spoken
+  "խաչապուրի" came back as "խաչապատ...ուտուստել") because it was never
+  trained on much Armenian. So `/api/transcribe` now loads **two** Whisper
+  models (`_load_stt` in `backend/app.py`) and picks between them by the
+  `language` field: the fine-tuned `Chillarmo/whisper-large-v3-turbo-armenian`
+  for `hy`, the generic `WHISPER_MODEL_SIZE` model for everything else. The
+  fine-tuned model ships as a plain Transformers/Safetensors checkpoint, not
+  the CTranslate2 format `faster-whisper` needs, so it's converted once
+  (`ctranslate2.converters.transformers`, `--quantization int8`) into
+  `backend/whisper_armenian_ct2/` (gitignored — a local build artifact, not
+  checked in) — see "Setup" for the conversion command.
 
   **Gotcha that broke this once**: feature-detecting `webkitSpeechRecognition`
   isn't enough to decide which path to use — **Safari defines that API in the
@@ -167,6 +224,23 @@ incoherent reply into a correct one, only a script-clean one into the
 response you get. It also means a chat call can now take up to 3x longer in
 the worst case (each retry is a full model call).
 
+**A second, stricter check catches contamination the ratio alone misses**:
+tested live, `qwen2.5:7b` would sometimes write a long, otherwise-correct
+Armenian reply and then tail off into a few characters of Chinese or Greek
+script — not enough to drag the overall `script_ratio` below 85%, so the
+ratio check alone let it through. `has_stray_foreign_script` checks for *any*
+presence of CJK, Hiragana/Katakana, Hangul, or Greek characters (never
+legitimate in an Armenian/Russian/English reply) and, for Armenian/Russian
+specifically, *any* stray Latin-script fragment too (also observed live,
+e.g. a token like "քենդalled") — Latin isn't flagged for English replies
+since that's the expected script there. `/api/chat` prefers the first reply
+across its 3 attempts that's both script-clean and above the ratio
+threshold, falling back to the best-ratio reply (even if contaminated) only
+if every attempt had some stray script in it. This makes Armenian replies
+noticeably slower in the worst case (more retries get burned chasing a fully
+clean attempt), and it's still a filter, not a fix for the underlying model
+weakness — see "Known limitation" below.
+
 ## Known limitation: local Armenian LLM quality
 
 The system prompt asks for plain "Armenian" (no dialect specifier) when
@@ -206,12 +280,42 @@ Tested against the models already pulled in your Ollama:
 - `armenia-lawyer-router` / `-v2` → per your own `Armenian_Chat_Status_and_TODO.md`
   notes in the sibling legal project, these degrade into gibberish after the
   first clause — same underlying issue, not fixed by this project.
+- `gemma2:9b` → **not viable on this hardware, full stop** - tested live,
+  timed out at 300s on every single request with no response at all, worse
+  than `qwen2.5:7b`'s already-slow ~2 min/reply. This isn't a quality
+  tradeoff to weigh, it's just too slow to use for an interactive assistant
+  on CPU. Not worth re-testing without a GPU.
+
+Beyond the models above, two more hallucination-flavored failure modes were
+observed with `qwen2.5:7b` that are **not** script/language bugs and can't
+be fixed by the retry/filter logic in `/api/chat`, since the text is
+perfectly well-formed in the right language/script - the model just
+confidently makes things up:
+- **Topic-driven language drift**: asked in English "give me Yerevan's
+  garden names," it answered in Armenian on all 3 attempts (script ratios
+  0.15, 0.00, 0.17) even though the input was unambiguously English - the
+  Armenia-related *topic* pulled it into Armenian regardless of the
+  system prompt's language instruction. `/api/chat` now runs one corrective
+  translation pass when this happens (see "Automatic correction" above),
+  which fixes the *script* (the reply comes back genuinely in the right
+  language) but can't fix content that was hallucinated garbage in the
+  first place - translating nonsense produces nonsense in a different
+  language, not a correct answer.
+- **Fabricated facts**: asked in Armenian for real Yerevan park names, it
+  returned a confident, grammatically fine, numbered list of 10 names -
+  none of which are real parks. This is base-model hallucination (no real
+  knowledge of local Yerevan geography), not a formatting problem; fixing
+  it for real would need either a model with genuine local knowledge or a
+  retrieval/grounding step (looking up real data instead of letting the
+  model invent it), not more prompt engineering.
 
 To compare another model's Armenian output, `ollama pull` it (e.g.
-`gemma2:9b`, `aya-expanse`, `command-r`), set `OLLAMA_MODEL` to its name, and
-restart the backend. In practice, small (2–4B) open models are generally
-weak at Armenian; if quality matters, plan on either a larger model (7B+) or
-a model specifically fine-tuned for Armenian.
+`aya-expanse`, `command-r`), set `OLLAMA_MODEL` to its name, and restart the
+backend - but check it actually runs fast enough on your hardware first;
+see the `gemma2:9b` result above. In practice, small (2–4B) open models are
+generally weak at Armenian, and CPU inference makes anything much larger
+than `qwen2.5:7b` impractically slow; if quality matters, plan on either a
+GPU or a model specifically fine-tuned for Armenian.
 
 ## Setup
 
@@ -237,7 +341,30 @@ Python — see `backend/requirements.txt`). Frontend deps go in
    ollama serve &          # if not already running
    ollama pull qwen2.5:7b  # the default; or qwen2.5:3b, gemma2:2b, etc.
    ```
-3. Start everything (backend on `:8191` + Vite on `:5178`):
+3. **One-time, optional but recommended**: convert the fine-tuned Armenian
+   Whisper model so `/api/transcribe` can use it for Armenian mic input
+   (skip this if you only care about Russian/English voice input, or don't
+   use Safari/Firefox at all — Chrome/Edge never hit Whisper). Downloads
+   ~3GB and needs `ctranslate2`, already in `backend/requirements.txt`:
+   ```bash
+   ./venv/bin/python3 -c "
+   import sys
+   from ctranslate2.converters.transformers import main
+   sys.argv = [
+       'ct2-transformers-converter',
+       '--model', 'Chillarmo/whisper-large-v3-turbo-armenian',
+       '--output_dir', 'backend/whisper_armenian_ct2',
+       '--copy_files', 'tokenizer_config.json', 'preprocessor_config.json',
+       '--quantization', 'int8',
+       '--force',
+   ]
+   sys.exit(main())
+   "
+   ```
+   If `backend/whisper_armenian_ct2/` doesn't exist, Armenian mic input
+   just falls back to the generic `WHISPER_MODEL_SIZE` model — still works,
+   just less accurate for Armenian specifically (see "Models used").
+4. Start everything (backend on `:8191` + Vite on `:5178`):
    ```bash
    ./start.sh          # Mac/Linux
    ```
@@ -248,7 +375,7 @@ Python — see `backend/requirements.txt`). Frontend deps go in
    Backend only, without Vite: `cd backend && python3 app.py` also works
    directly (no `--reload` though — use `uvicorn backend.app:app --reload`
    from the project root, or `../start.sh`, if you want that).
-4. Open **http://localhost:5178** in any modern browser — Chrome/Edge use
+5. Open **http://localhost:5178** in any modern browser — Chrome/Edge use
    native speech recognition for the mic button, Safari/Firefox use the
    Whisper fallback automatically. Port `:8191` was picked to avoid clashing
    with your other local projects (`:8001` BetterTalkNowAI, `:8000/:5173`
@@ -268,14 +395,16 @@ the same reason, in case you call `/api/speak` directly.
 - `OLLAMA_MODEL_RU` — default `qwen2.5:3b`, used for Russian-detected input
 - `OLLAMA_MODEL_EN` — default `qwen2.5:3b`, used for English-detected input
 - `TTS_MODEL_ID` — default `facebook/mms-tts-hyw`
-- `WHISPER_MODEL_SIZE` — default `small` (Safari/Firefox STT fallback; larger
-  = more accurate but slower on CPU). Western Armenian is low-resource for
-  Whisper, and `small` can garble or hallucinate short phrases entirely
-  (e.g. "Բարև ոնց ես" transcribed as unrelated, mixed-script gibberish)
-  instead of failing cleanly. If that happens often, set
-  `WHISPER_MODEL_SIZE=medium` (or `large-v3`) before starting the backend —
-  slower and more RAM, but much more reliable on short Armenian input.
-  Chrome/Edge don't hit this at all since they skip Whisper entirely.
+- `WHISPER_MODEL_SIZE` — default `medium` (Safari/Firefox STT fallback for
+  Russian/English; larger = more accurate but slower on CPU). Only affects
+  the *generic* Whisper model — Armenian mic input uses the dedicated
+  fine-tuned model in `backend/whisper_armenian_ct2/` instead (see "Models
+  used" and "Setup"), not this one. Used to default to `small`, which
+  garbled/hallucinated short phrases (e.g. "Բարև ոնց ես" transcribed as
+  unrelated, mixed-script gibberish) instead of failing cleanly — bumped to
+  `medium` after that was observed live. Chrome/Edge don't hit either
+  Whisper model at all since they skip straight to the browser's native
+  speech recognition.
 
 ## API
 
@@ -284,5 +413,10 @@ the same reason, in case you call `/api/speak` directly.
 - `POST /api/chat` `{message, model?, history?}` → `{reply, model}` — `model`
   is optional and only useful for scripting/testing; the UI never sends it
 - `POST /api/speak` `{text}` → `audio/wav` bytes
-- `POST /api/transcribe` (multipart, field `audio`) → `{text}` — Whisper
-  fallback used by browsers without Web Speech Recognition
+- `POST /api/transcribe` (multipart, fields `audio`, optional `language`
+  = `hy`/`ru`/`en`) → `{text}` — Whisper fallback used by browsers without
+  Web Speech Recognition. `language` picks which Whisper model runs (the
+  Armenian fine-tune for `hy`, the generic model otherwise) and pins
+  Whisper's decode language; omit it to auto-detect instead (less reliable
+  for Armenian specifically — see "Why these choices"). The UI always sends
+  it, from whichever language-switcher button is active.
